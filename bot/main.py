@@ -22,6 +22,15 @@ def main():
     bot = Bot(token=config.bot_token)
     dp = Dispatcher()
     dp.include_router(router)
+
+    if config.mode != "webhook":
+        import asyncio
+
+        asyncio.run(dp.start_polling(bot))
+        return
+
+    if not config.webhook_base_url:
+        raise RuntimeError("MODE=webhook requires WEBHOOK_BASE_URL")
     dp.startup.register(on_startup)
 
     app = web.Application()

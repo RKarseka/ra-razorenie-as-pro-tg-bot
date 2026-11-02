@@ -13,8 +13,13 @@ class Config:
             int(x) for x in os.environ["ALLOWED_USER_IDS"].split(",") if x.strip()
         }
     )
-    # Public HTTPS base URL Telegram calls (from Cloudflare Tunnel or direct).
-    webhook_base_url: str = field(default_factory=lambda: os.environ["WEBHOOK_BASE_URL"])
+    # "polling" (default, no public endpoint needed) or "webhook" (needs
+    # WEBHOOK_BASE_URL — public HTTPS, e.g. Cloudflare/Tailscale Funnel).
+    mode: str = os.environ.get("MODE", "polling")
+    # Public HTTPS base URL Telegram calls (webhook mode only).
+    webhook_base_url: str | None = field(
+        default_factory=lambda: os.environ.get("WEBHOOK_BASE_URL")
+    )
     webhook_path: str = "/webhook"
     webhook_host: str = os.environ.get("WEBHOOK_HOST", "0.0.0.0")
     webhook_port: int = int(os.environ.get("WEBHOOK_PORT", "8080"))

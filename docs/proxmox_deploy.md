@@ -1,28 +1,34 @@
 # Deploy on the Proxmox host
 
-Everything runs in one Debian LXC on the Proxmox box. Telegram reaches the bot
-through a Cloudflare Tunnel (free, no white IP needed).
+Everything runs in one Debian LXC on the Proxmox box.
+
+Two modes:
+
+- **MODE=polling** (default): bot polls Telegram itself — nothing is exposed,
+  no domain/tunnel/cert needed. Recommended.
+- **MODE=webhook**: needs a public HTTPS URL — Cloudflare Tunnel (domain
+  required) or Tailscale Funnel (no domain needed, stable `*.ts.net` name).
 
 ## 1. LXC container
 
 Debian 12 template, unprivileged is fine. Inside:
 
 ```bash
-apt update && apt install -y python3-venv android-tools-adb curl
-python3 -m venv /opt/asbot && /opt/asbot/bin/pip install -r requirements.txt
+apt update && apt install -y python3-venv android-tools-adb git curl
 git clone <repo> /opt/ra-razorenie-as-pro-tg-bot
-cd /opt/ra-razorenie-as-pro-tg-bot && /opt/asbot/bin/pip install -r requirements.txt
+python3 -m venv /opt/asbot
+/opt/asbot/bin/pip install -r /opt/ra-razorenie-as-pro-tg-bot/requirements.txt
+mkdir -p /var/lib/asbot
 ```
 
 ## 2. Env file `/opt/ra-razorenie-as-pro-tg-bot/.env`
 
 ```
 BOT_TOKEN=123:abc           # from @BotFather
-ALLOWED_USER_IDS=123456789  # your Telegram user id (@userinfobot)
-WEBHOOK_BASE_URL=https://asbot.example.com
+ALLOWED_USER_IDS=360053442
 DEVICE_SERIAL=192.168.1.50:5555   # duty phone LAN ip
-WEBHOOK_PORT=8080
 DB_PATH=/var/lib/asbot/places.db
+MODE=polling
 ```
 
 ## 3. systemd unit `/etc/systemd/system/asbot.service`
@@ -45,17 +51,28 @@ WantedBy=multi-user.target
 
 `systemctl enable --now asbot`
 
-## 4. Cloudflare Tunnel
+## 4. Public endpoint — only for MODE=webhook
+
+Skip entirely with MODE=polling.
+
+Option A — Tailscale Funnel (no domain needed):
+
+```bash
+tailscale up                       # auth once
+tailscale funnel --bg 8080         # -> https://<lxc>.<tailnet>.ts.net
+# enable HTTPS certificates + MagicDNS in the tailnet admin panel once
+```
+
+Option B — Cloudflare Tunnel (needs a domain on Cloudflare):
 
 ```bash
 cloudflared tunnel login
 cloudflared tunnel create asbot
 cloudflared tunnel route dns asbot asbot.example.com
-# config: http://localhost:8080 -> /webhook is the only public path
 cloudflared service install
 ```
 
-Point `WEBHOOK_BASE_URL` at the tunnel hostname. The bot registers the
+Point `WEBHOOK_BASE_URL` at the resulting hostname. The bot registers the
 webhook itself on startup (`setWebhook`).
 
 ## 5. Phone
