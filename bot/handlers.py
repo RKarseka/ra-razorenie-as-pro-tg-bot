@@ -46,7 +46,7 @@ BTN_STATUS = "Статус"
 BTN_STOP = "Остановить визит"
 BTN_DUMP = "Дамп UI"
 BTN_UPDATE = "Обновить бота"
-BTN_JITTER = "Смещение"
+BTN_SETTINGS = "Настройки"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -63,7 +63,7 @@ def main_menu() -> ReplyKeyboardMarkup:
             ],
             [KeyboardButton(text=BTN_STOP)],
             [KeyboardButton(text=BTN_DUMP), KeyboardButton(text=BTN_UPDATE),
-             KeyboardButton(text=BTN_JITTER)],
+             KeyboardButton(text=BTN_SETTINGS)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -737,15 +737,38 @@ async def menu_stop(m: types.Message):
     await cmd_stop(m)
 
 
-@router.message(F.text == BTN_JITTER)
+def _settings_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="Смещение координат: "
+                 + ("вкл (10-30 м)" if store.jitter_on() else "выкл (точная точка)"),
+            callback_data="setjitter")],
+        [InlineKeyboardButton(text="✕ Закрыть", callback_data="setclose")],
+    ])
+
+
+@router.message(F.text == BTN_SETTINGS)
 @owner_only
-async def menu_jitter(m: types.Message):
+async def menu_settings(m: types.Message):
+    await m.answer("Настройки:", reply_markup=_settings_kb())
+
+
+@router.callback_query(F.data == "setjitter")
+async def callback_set_jitter(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
     on = store.jitter_on()
     store.set_setting("jitter", "0" if on else "1")
-    await m.answer(
-        f"Смещение координат: {'выкл (точная точка)' if on else 'вкл (10-30 м)'}",
-        reply_markup=main_menu(),
-    )
+    await c.message.edit_text("Настройки:", reply_markup=_settings_kb())
+    await c.answer("Смещение: " + ("выкл" if on else "вкл"))
+
+
+@router.callback_query(F.data == "setclose")
+async def callback_set_close(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    await _drop(c.message)
+    await c.answer()
 
 
 @router.message(F.text == BTN_DUMP)
