@@ -1135,6 +1135,47 @@ async def callback_geo_pick(c: types.CallbackQuery):
     await discover_venues(c.message, c.from_user.id, "", lat, lon)
 
 
+@router.message(F.text == BTN_ADM_RESTART)
+async def menu_adm_restart(m: types.Message):
+    uid = m.from_user.id
+    if not store.is_admin(uid):
+        return
+    reqs = store.open_requests_for_admin(uid)
+    if not reqs:
+        return await m.answer("Нет открытых запросов.")
+    if len(reqs) == 1:
+        return await _admin_restart(m, reqs[0])
+    _pending_restart[uid] = reqs
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{r['venue']} ({r['state']})",
+                              callback_data=f"restrt:{i}")]
+        for i, r in enumerate(reqs)])
+    await m.answer("Какой запрос перезапустить?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("restrt:"))
+async def callback_restart_pick(c: types.CallbackQuery):
+    try:
+        req = _pending_restart[c.from_user.id][
+            int(c.data.removeprefix("restrt:"))]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел.", show_alert=True)
+    await c.answer()
+    await _drop(c.message)
+    await _admin_restart(c.message, req)
+
+
+async def _admin_restart(m: types.Message, req: dict) -> None:
+    place = store.get(req["venue"])
+    if not place:
+        return await m.answer("Объект удалён из списка.")
+    await _drop(m)
+    await _broadcast(m.bot, place.name, req["owner"],
+                     f"🔁 Администратор {m.chat.id} просит повторить "
+                     f"«{place.name}» — запускаю.")
+    store.set_request_state(req["id"], "ready")
+    await _run_checkin(m, place, req["service"] or None, req["id"])
+
 @router.message(F.text)
 async def free_text(m: types.Message):
     uid = m.from_user.id
@@ -1182,45 +1223,3 @@ async def free_text(m: types.Message):
         "Выбери нужный вариант — или напиши другое название:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
-
-
-@router.message(F.text == BTN_ADM_RESTART)
-async def menu_adm_restart(m: types.Message):
-    uid = m.from_user.id
-    if not store.is_admin(uid):
-        return
-    reqs = store.open_requests_for_admin(uid)
-    if not reqs:
-        return await m.answer("Нет открытых запросов.")
-    if len(reqs) == 1:
-        return await _admin_restart(m, reqs[0])
-    _pending_restart[uid] = reqs
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"{r['venue']} ({r['state']})",
-                              callback_data=f"restrt:{i}")]
-        for i, r in enumerate(reqs)])
-    await m.answer("Какой запрос перезапустить?", reply_markup=kb)
-
-
-@router.callback_query(F.data.startswith("restrt:"))
-async def callback_restart_pick(c: types.CallbackQuery):
-    try:
-        req = _pending_restart[c.from_user.id][
-            int(c.data.removeprefix("restrt:"))]
-    except (KeyError, IndexError, ValueError):
-        return await c.answer("Список устарел.", show_alert=True)
-    await c.answer()
-    await _drop(c.message)
-    await _admin_restart(c.message, req)
-
-
-async def _admin_restart(m: types.Message, req: dict) -> None:
-    place = store.get(req["venue"])
-    if not place:
-        return await m.answer("Объект удалён из списка.")
-    await _drop(m)
-    await _broadcast(m.bot, place.name, req["owner"],
-                     f"🔁 Администратор {m.chat.id} просит повторить "
-                     f"«{place.name}» — запускаю.")
-    store.set_request_state(req["id"], "ready")
-    await _run_checkin(m, place, req["service"] or None, req["id"])
