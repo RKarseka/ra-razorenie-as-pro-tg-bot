@@ -108,6 +108,10 @@ class Device:
 
     # ---------- apps ----------
 
+    def wake_and_unlock(self) -> None:
+        self._adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
+        self._adb("shell", "wm", "dismiss-keyguard")
+
     def open_allsports(self) -> None:
         self._adb(
             "shell", "monkey", "-p", self.allsports_pkg,
@@ -146,6 +150,10 @@ class Device:
             log.info("step: %s", name)
             if on_step:
                 on_step(name)
+
+        step("wake_and_unlock")
+        self.wake_and_unlock()
+        time.sleep(1)
 
         step("set_location")
         self.set_location(lat, lon)

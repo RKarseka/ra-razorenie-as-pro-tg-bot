@@ -13,6 +13,8 @@ Works on any of: Samsung A26 (Android 15) or Redmi Note 7 (Android 9/10 MIUI).
     plus Autostart ON for both apps. MIUI kills background services otherwise.
 - Wi-Fi: fixed channel, "keep Wi-Fi on during sleep" = always.
 - Charge: phone lives on the charger; screen timeout can stay short.
+- Lock screen: use no PIN, password, or pattern. The bot wakes the screen and
+  dismisses an unsecured keyguard before every check-in.
 
 ## First USB session
 
