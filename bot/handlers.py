@@ -24,6 +24,9 @@ router = Router()
 store = PlaceStore(config.db_path)
 device = Device(config.device_serial, config.allsports_pkg)
 
+# Pending venue picks per user: names discovered by /addplace.
+_pending_venues: dict[int, dict] = {}
+
 BTN_CHECKIN = "Запросить визит"
 BTN_PLACES = "Объекты"
 BTN_ADD_PLACE = "Добавить объект"
@@ -111,25 +114,38 @@ async def cmd_places(m: types.Message):
 async def cmd_addplace(m: types.Message, command: CommandObject):
     try:
         parts = command.args.replace(",", " ").split()
-        name = " ".join(parts[:-2])
         latitude, longitude = float(parts[-2]), float(parts[-1])
-        if not name:
-            raise ValueError
-        store.add(name, latitude, longitude)
+        name = " ".join(parts[:-2])
     except (ValueError, AttributeError, IndexError):
         return await m.answer(
-            "Usage: /addplace name lat lon (имя можно с пробелами)\n"
-            "Yandex Maps format is supported: /addplace Dance Cafe 53.915323, 27.571478"
+            "Usage: /addplace [name] lat lon (имя можно с пробелами или опустить)\n"
+            "Yandex Maps format is supported: /addplace 53.915323, 27.571478"
         )
-    await m.answer(f"Saved {name} ({latitude}, {longitude})", reply_markup=main_menu())
+    if name:
+        store.add(name, latitude, longitude)
+        await m.answer(f"Saved {name} ({latitude}, {longitude})", reply_markup=main_menu())
 
     progress = await m.answer("Смотрю, какие заведения рядом с этой точкой…")
     try:
         await run_in_thread(device.connect)
         names, shot = await run_in_thread(device.venues_near, latitude, longitude)
         if names:
+            _pending_venues[m.from_user.id] = {
+                "names": names,
+                "lat": latitude,
+                "lon": longitude,
+                "saved_as": name or None,
+            }
             listing = "\n".join(f"• {n}" for n in names)
-            await progress.edit_text("Заведения рядом с этой точкой:\n" + listing)
+            buttons = [
+                [InlineKeyboardButton(text=n, callback_data=f"save:{i}")]
+                for i, n in enumerate(names)
+            ]
+            await progress.edit_text(
+                "Заведения рядом с этой точкой:\n" + listing
+                + "\n\nНажми на нужное — сохраню объект под этим названием.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+            )
         else:
             await progress.edit_text("Список заведений не распарсился — вот скриншот.")
         await m.answer_photo(
@@ -139,6 +155,28 @@ async def cmd_addplace(m: types.Message, command: CommandObject):
     except Exception as e:
         log.exception("venues_near failed")
         await progress.edit_text(f"Не удалось открыть список: {e}")
+
+
+@router.callback_query(F.data.startswith("save:"))
+async def callback_save_place(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    pend = _pending_venues.get(c.from_user.id)
+    try:
+        name = pend["names"][int(c.data.removeprefix("save:"))]
+        lat, lon = pend["lat"], pend["lon"]
+    except (TypeError, KeyError, IndexError, ValueError):
+        return await c.answer(
+            "Список устарел — отправь /addplace заново.", show_alert=True
+        )
+    store.add(name, lat, lon)
+    if pend.get("saved_as") and pend["saved_as"] != name:
+        store.remove(pend["saved_as"])
+    pend["saved_as"] = name
+    await c.answer(f"Сохранено: {name}")
+    await c.message.answer(
+        f"Saved {name} ({lat}, {lon})", reply_markup=main_menu()
+    )
 
 
 @router.message(Command("delplace"))
