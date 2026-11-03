@@ -102,8 +102,8 @@ async def cmd_help(m: types.Message):
 async def cmd_places(m: types.Message):
     places = store.list()
     if not places:
-        return await m.answer("No places yet. /addplace name lat lon")
-    await m.answer("\n".join(f"• {p.name}: {p.lat}, {p.lon}" for p in places))
+        return await m.answer("No places yet. /addplace name lat lon", reply_markup=main_menu())
+    await m.answer("\n".join(f"• {p.name}: {p.lat}, {p.lon}" for p in places), reply_markup=main_menu())
 
 
 @router.message(Command("addplace"))
@@ -119,25 +119,25 @@ async def cmd_addplace(m: types.Message, command: CommandObject):
             "Usage: /addplace name lat lon\n"
             "Yandex Maps format is supported: /addplace dc 53.915323, 27.571478"
         )
-    await m.answer(f"Saved {name} ({latitude}, {longitude})")
+    await m.answer(f"Saved {name} ({latitude}, {longitude})", reply_markup=main_menu())
 
 
 @router.message(Command("delplace"))
 @owner_only
 async def cmd_delplace(m: types.Message, command: CommandObject):
     if not command.args or not store.remove(command.args.strip()):
-        return await m.answer("Not found. /places to list")
-    await m.answer("Removed")
+        return await m.answer("Not found. /places to list", reply_markup=main_menu())
+    await m.answer("Removed", reply_markup=main_menu())
 
 
 @router.message(Command("checkin"))
 @owner_only
 async def cmd_checkin(m: types.Message, command: CommandObject):
     if not command.args:
-        return await m.answer("Usage: /checkin name")
+        return await m.answer("Usage: /checkin name", reply_markup=main_menu())
     place = store.get(command.args.strip())
     if not place:
-        return await m.answer("Unknown place. /places to list")
+        return await m.answer("Unknown place. /places to list", reply_markup=main_menu())
 
     await perform_checkin(m, place)
 
@@ -165,7 +165,7 @@ async def perform_checkin(m: types.Message, place):
         steps = await run_in_thread(
             device.checkin, place.name, place.lat, place.lon, on_step=on_step
         )
-        await progress.edit_text("Request sent — waiting for admin confirmation.")
+        await progress.edit_text("Request sent — waiting for admin confirmation.", reply_markup=main_menu())
         for s in steps:
             if s.screenshot:
                 await m.answer_photo(
@@ -174,7 +174,7 @@ async def perform_checkin(m: types.Message, place):
                 )
     except Exception as e:
         log.exception("checkin failed")
-        await progress.edit_text(f"Failed at {last_step[0]}: {e}")
+        await progress.edit_text(f"Failed at {last_step[0]}: {e}", reply_markup=main_menu())
         try:
             shot = await run_in_thread(device.screenshot)
             await m.answer_photo(BufferedInputFile(shot, filename="screen.png"))
@@ -217,7 +217,8 @@ async def menu_add_place(m: types.Message):
     await m.answer(
         "Пришли объект одной строкой:\n"
         "/addplace имя 53.915323, 27.571478\n\n"
-        "Координаты можно вставить прямо из Яндекс Карт."
+        "Координаты можно вставить прямо из Яндекс Карт.",
+        reply_markup=main_menu(),
     )
 
 
@@ -227,7 +228,7 @@ async def cmd_stop(m: types.Message):
     try:
         await run_in_thread(device.connect)
         await run_in_thread(device.clear_location)
-        await m.answer("Spoof stopped")
+        await m.answer("Spoof stopped", reply_markup=main_menu())
     except DeviceError as e:
         await m.answer(f"Failed: {e}")
 
@@ -264,9 +265,9 @@ async def cmd_status(m: types.Message):
     try:
         await run_in_thread(device.connect)
         app = await run_in_thread(device.current_app)
-        await m.answer(f"Device OK\nForeground: {app}")
+        await m.answer(f"Device OK\nForeground: {app}", reply_markup=main_menu())
     except DeviceError as e:
-        await m.answer(f"Device unreachable: {e}")
+        await m.answer(f"Device unreachable: {e}", reply_markup=main_menu())
 
 
 @router.message(F.text == BTN_SHOT)
