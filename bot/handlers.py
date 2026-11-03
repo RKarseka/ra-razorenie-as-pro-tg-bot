@@ -614,7 +614,12 @@ async def perform_checkin(m: types.Message, place, service: str | None = None):
                 )
     except Exception as e:
         log.exception("checkin failed")
-        await progress.edit_text(f"Failed at {last_step[0]}: {e}")
+        sp = device.last_spoof
+        geo = ""
+        if sp:
+            geo = (f"\n📍 {sp[0]},{sp[1]} → {sp[2]:.6f},{sp[3]:.6f} "
+                   f"(смещение {sp[4]:.0f} м)")
+        await progress.edit_text(f"Failed at {last_step[0]}: {e}{geo}")
         try:
             shot = await run_in_thread(device.screenshot)
             await m.answer_photo(BufferedInputFile(shot, filename="screen.png"))

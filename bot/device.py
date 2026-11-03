@@ -232,27 +232,39 @@ class Device:
         # The venue list loads asynchronously after the location changes —
         # poll for a while before scrolling.
         target = None
-        for _attempt in range(2):
-            deadline = time.time() + 20
-            while time.time() < deadline:
-                target = find_venue()
+        for _entry in range(2):
+            for _attempt in range(2):
+                deadline = time.time() + 20
+                while time.time() < deadline:
+                    target = find_venue()
+                    if target is not None:
+                        break
+                    time.sleep(1)
+                if target is None and d(scrollable=True).exists:
+                    for _ in range(6):
+                        before = d.dump_hierarchy()
+                        d(scrollable=True).scroll.forward()
+                        time.sleep(1)
+                        target = find_venue()
+                        if target is not None or d.dump_hierarchy() == before:
+                            break
                 if target is not None:
                     break
-                time.sleep(1)
-            if target is None and d(scrollable=True).exists:
-                for _ in range(6):
-                    before = d.dump_hierarchy()
-                    d(scrollable=True).scroll.forward()
+                # Back to the top before the second sweep.
+                if d(scrollable=True).exists:
+                    d(scrollable=True).scroll.toBeginning(max_swipes=10)
                     time.sleep(1)
-                    target = find_venue()
-                    if target is not None or d.dump_hierarchy() == before:
-                        break
-            if target is not None:
+            if target is not None or _entry == 1:
                 break
-            # Back to the top before the second sweep.
-            if d(scrollable=True).exists:
-                d(scrollable=True).scroll.toBeginning(max_swipes=10)
-                time.sleep(1)
+            # The list may never have loaded — back out and re-enter
+            # the geo list once before giving up.
+            d.press("back")
+            time.sleep(2)
+            try:
+                self._open_geo_list(d)
+            except DeviceError:
+                pass
+            time.sleep(3)
         if target is not None:
             target.click()
         steps.append(Step("venue_selected", self.screenshot()))
