@@ -28,6 +28,8 @@ device = Device(config.device_serial, config.allsports_pkg)
 _pending_venues: dict[int, dict] = {}
 # Place names shown by /places, so delete callbacks fit 64-byte callback_data.
 _pending_del: dict[int, list[str]] = {}
+# Last «Объекты» listing per user (Place rows, for service editing).
+_pending_places: dict[int, list] = {}
 # Venue whose services were offered for the visit, per user.
 _pending_svc: dict[int, object] = {}
 # Service multi-select at venue registration, per user.
@@ -128,12 +130,14 @@ async def cmd_places(m: types.Message):
         for p in places
     ]
     _pending_del[m.from_user.id] = [p.name for p in places]
+    _pending_places[m.from_user.id] = places
     buttons = [
-        [InlineKeyboardButton(text=f"🗑 {p.name}", callback_data=f"del:{i}")]
+        [InlineKeyboardButton(text=f"✏️ услуги {p.name}", callback_data=f"svcedit:{i}"),
+         InlineKeyboardButton(text=f"🗑 {p.name}", callback_data=f"del:{i}")]
         for i, p in enumerate(places)
     ]
     await m.answer(
-        "\n".join(lines) + "\n\n🗑 — удалить объект",
+        "\n".join(lines) + "\n\n✏️ — изменить услуги · 🗑 — удалить объект",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
 
@@ -261,6 +265,35 @@ async def discover_venues(m: types.Message, uid: int, name: str,
     except Exception as e:
         log.exception("venues_near failed")
         await progress.edit_text(f"Не удалось открыть список: {e}")
+
+
+@router.callback_query(F.data.startswith("svcedit:"))
+async def callback_edit_services(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    try:
+        place = _pending_places[c.from_user.id][int(c.data.removeprefix("svcedit:"))]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    await c.answer()
+    prog = await c.message.edit_text(f"Собираю услуги «{place.name}»…")
+    try:
+        await run_in_thread(device.connect)
+        services = await run_in_thread(
+            device.services_of_venue, place.name, place.lat, place.lon)
+    except Exception as e:
+        log.exception("services_of_venue failed")
+        return await prog.edit_text(f"Не удалось собрать услуги: {e}")
+    if not services:
+        return await prog.edit_text("Услуги не распарсились.")
+    _pending_svc_pick[c.from_user.id] = {
+        "place": (place.name, place.lat, place.lon, place.address),
+        "services": services,
+        "chosen": {i for i, s in enumerate(services) if s in place.services},
+    }
+    await _render_service_pick(prog, place.name, services,
+                               _pending_svc_pick[c.from_user.id]["chosen"])
 
 
 @router.callback_query(F.data.startswith("del:"))
