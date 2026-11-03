@@ -44,6 +44,7 @@ async def cmd_help(m: types.Message):
         "/checkin name — spoof location & request check-in\n"
         "/stop — stop location spoof\n"
         "/shot — screenshot the duty phone\n"
+        "/dump — UI hierarchy for selector calibration\n"
         "/status — device connectivity"
     )
 
@@ -104,12 +105,13 @@ async def cmd_checkin(m: types.Message, command: CommandObject):
                     BufferedInputFile(s.screenshot, filename=f"{s.name}.png"),
                     caption=s.name,
                 )
-    except DeviceError as e:
+    except Exception as e:
+        log.exception("checkin failed")
         await progress.edit_text(f"Failed: {e}")
         try:
             shot = await run_in_thread(device.screenshot)
             await m.answer_photo(BufferedInputFile(shot, filename="screen.png"))
-        except DeviceError:
+        except Exception:
             pass
 
 
@@ -132,6 +134,21 @@ async def cmd_shot(m: types.Message):
         png = await run_in_thread(device.screenshot)
         await m.answer_photo(BufferedInputFile(png, filename="screen.png"))
     except DeviceError as e:
+        await m.answer(f"Failed: {e}")
+
+
+@router.message(Command("dump"))
+@owner_only
+async def cmd_dump(m: types.Message):
+    try:
+        await run_in_thread(device.connect)
+        xml = await run_in_thread(device.dump_ui)
+        await m.answer_document(
+            BufferedInputFile(xml.encode(), filename="hierarchy.xml"),
+            caption="UI hierarchy",
+        )
+    except Exception as e:
+        log.exception("dump failed")
         await m.answer(f"Failed: {e}")
 
 

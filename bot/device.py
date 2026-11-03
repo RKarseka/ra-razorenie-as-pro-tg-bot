@@ -11,6 +11,7 @@ import io
 import logging
 import math
 import random
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -164,21 +165,25 @@ class Device:
         time.sleep(6)
 
         d = u2.connect(self.serial)
+        steps.append(Step("allsports_home", self.screenshot()))
 
         step("new_checkin_tab")
-        # Bottom-nav "New check-in" tab. Try resource-id first, then text.
-        if not d(description="New check-in").click_exists(timeout=5):
-            d(text="New check-in").click_exists(timeout=5)
+        # Bottom-nav tab opening the venue list. EN and RU labels seen in the
+        # wild; calibrate via /dump if none matches.
+        new_checkin_re = "(?i).*(check.?in|чек.?ин|посещение|визит).*"
+        if not d(descriptionMatches=new_checkin_re).click_exists(timeout=5):
+            d(textMatches=new_checkin_re).click_exists(timeout=5)
         time.sleep(3)
+        steps.append(Step("venue_list", self.screenshot()))
 
         step("select_venue")
         # The venue list is geo-filtered; find our place by name and tap it.
-        found = d(textContains=place_name).click_exists(timeout=10)
-        if not found:
+        name_re = "(?i).*" + re.escape(place_name) + ".*"
+        found = d(textMatches=name_re).click_exists(timeout=10)
+        if not found and d(scrollable=True).exists:
             d(scrollable=True).scroll.toBeginning()
-            found = d(scrollable=True).scroll.to(textContains=place_name)
-            if found:
-                d(textContains=place_name).click_exists(timeout=3)
+            if d(scrollable=True).scroll.to(textMatches=name_re):
+                found = d(textMatches=name_re).click_exists(timeout=3)
         steps.append(Step("venue_selected", self.screenshot()))
         if not found:
             raise DeviceError(f"venue '{place_name}' not found in geo list")
@@ -186,17 +191,18 @@ class Device:
         step("tap_checkin")
         time.sleep(2)
         # Supplier bottom sheet -> Check in button
-        if not d(textMatches="(?i)check.?in").click_exists(timeout=8):
+        checkin_btn_re = "(?i).*(check.?in|отметиться|отметить|чек.?ин).*"
+        if not d(textMatches=checkin_btn_re).click_exists(timeout=8):
             raise DeviceError("'Check in' button not found")
         time.sleep(4)
 
         step("confirm")
         # Possible extra dialog ("Choose a check-in method" / confirm).
-        if d(textMatches="(?i)choose a check-in method").exists:
-            d(textMatches="(?i)(location|geo|near me)").click_exists(timeout=5)
+        if d(textMatches="(?i).*(choose a check-in method|способ).*").exists:
+            d(textMatches="(?i).*(location|geo|near me|гео|локац).*").click_exists(timeout=5)
             time.sleep(3)
-        if d(textMatches="(?i)(confirm|yes|ok)").exists:
-            d(textMatches="(?i)(confirm|yes|ok)").click_exists(timeout=3)
+        if d(textMatches="(?i).*(confirm|yes|ok|подтвердить|да|ок).*").exists:
+            d(textMatches="(?i).*(confirm|yes|ok|подтвердить|да|ок).*").click_exists(timeout=3)
             time.sleep(3)
 
         step("result")
