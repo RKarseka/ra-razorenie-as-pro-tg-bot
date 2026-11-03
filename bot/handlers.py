@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import secrets
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 from aiogram import Router, types, F
@@ -37,6 +39,10 @@ _pending_svc_pick: dict[int, dict] = {}
 _awaiting_place_name: set[int] = set()
 # Geocoding candidates offered to each user.
 _pending_geo: dict[int, list] = {}
+# Live visit requests awaiting the admin decision, keyed by request id.
+_pending_req: dict[str, dict] = {}
+# Admin restart picks when several requests are open.
+_pending_restart: dict[int, list] = {}
 
 BTN_CHECKIN = "Запросить визит"
 BTN_PLACES = "Объекты"
@@ -47,6 +53,7 @@ BTN_STOP = "Остановить визит"
 BTN_DUMP = "Дамп UI"
 BTN_UPDATE = "Обновить бота"
 BTN_SETTINGS = "Настройки"
+BTN_ADM_RESTART = "Перезапустить запрос"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -68,6 +75,35 @@ def main_menu() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         is_persistent=True,
     )
+
+
+def admin_menu() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=BTN_ADM_RESTART)]],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+_TZ3 = timezone(timedelta(hours=3))
+
+
+def _secs_until_close() -> float:
+    """Seconds until 22:30 today (UTC+3). 0 when already past."""
+    now = datetime.now(_TZ3)
+    deadline = now.replace(hour=22, minute=30, second=0, microsecond=0)
+    return max(0.0, (deadline - now).total_seconds())
+
+
+async def _broadcast(bot, venue: str, owner_uid: int, text: str,
+                     exclude: set[int] | None = None) -> None:
+    """Log an event to the request owner AND every venue admin at once."""
+    targets = ({owner_uid} | set(store.admins_for(venue))) - (exclude or set())
+    for uid in targets:
+        try:
+            await bot.send_message(uid, text)
+        except Exception:
+            pass
 
 
 def place_menu(uid: int) -> InlineKeyboardMarkup | None:
@@ -131,13 +167,40 @@ async def _untrack(bot, uid: int, kind: str) -> None:
 
 
 @router.message(Command("start", "help"))
-@owner_only
-async def cmd_help(m: types.Message):
+async def cmd_help(m: types.Message, command: CommandObject):
     await _drop(m)
-    await _untrack(m.bot, m.from_user.id, "menu")
+    uid = m.from_user.id
+    if command.args and command.args.startswith("adm_"):
+        await _accept_invite(m, command.args[4:])
+        return
+    if uid not in config.allowed_users:
+        if store.is_admin(uid):
+            venues = "\n".join(f"• {v}" for v in store.venues_of(uid))
+            await m.answer(f"Ты администратор:\n{venues}",
+                           reply_markup=admin_menu())
+        return  # silently ignore strangers
+    await _untrack(m.bot, uid, "menu")
     r = await m.answer("Выбери действие кнопкой ниже.",
                        reply_markup=main_menu())
-    _track(m.from_user.id, "menu", r.message_id)
+    _track(uid, "menu", r.message_id)
+
+
+async def _accept_invite(m: types.Message, token: str) -> None:
+    row = store.take_invite(token)
+    if not row:
+        return await m.answer("Ссылка недействительна или уже использована.")
+    venue, invited_by = row
+    store.add_admin(venue, m.from_user.id)
+    who = m.from_user.full_name
+    await m.answer(f"Ты принял приглашение — теперь ты администратор "
+                   f"«{venue}».\nЗапросы на визит будут приходить сюда.",
+                   reply_markup=admin_menu())
+    try:
+        await m.bot.send_message(invited_by,
+                                 f"✅ {who} принял приглашение и стал "
+                                 f"администратором «{venue}».")
+    except Exception:
+        pass
 
 
 @router.message(Command("places"))
@@ -297,6 +360,7 @@ def _place_card(place) -> tuple[str, InlineKeyboardMarkup, int]:
         [InlineKeyboardButton(text="✏️ Услуги", callback_data=f"svcedit:{idx}"),
          InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del:{idx}")],
         [InlineKeyboardButton(text="🏃 Запросить визит", callback_data=f"vis:{idx}")],
+        [InlineKeyboardButton(text="👥 Администраторы", callback_data=f"admlist:{idx}")],
         [InlineKeyboardButton(text="← Назад к объектам", callback_data="plcback")],
     ])
     return text, kb, idx
@@ -336,6 +400,78 @@ async def callback_places_back(c: types.CallbackQuery):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await c.answer()
+
+
+@router.callback_query(F.data.startswith("admlist:"))
+async def callback_admins(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    try:
+        place = _pending_places[c.from_user.id][int(c.data.removeprefix("admlist:"))]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    idx = int(c.data.removeprefix("admlist:"))
+    admins = store.admins_for(place.name)
+    rows = []
+    kb = []
+    for i, aid in enumerate(admins):
+        try:
+            ch = await c.bot.get_chat(aid)
+            name = ("@" + ch.username) if ch.username else ch.full_name
+        except Exception:
+            name = str(aid)
+        rows.append(f"• {name}")
+        kb.append([InlineKeyboardButton(
+            text=f"🗑 {name}", callback_data=f"admdel:{idx}:{i}")])
+    kb.append([InlineKeyboardButton(text="➕ Пригласить админа",
+                                    callback_data=f"adminv:{idx}")])
+    kb.append([InlineKeyboardButton(text="← Назад к объекту",
+                                    callback_data=f"plc:{idx}")])
+    _pending_places[c.from_user.id] = store.list()
+    text = (f"👥 Администраторы «{place.name}»:\n"
+            + ("\n".join(rows) if rows else "—"))
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("adminv:"))
+async def callback_admin_invite(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    try:
+        place = _pending_places[c.from_user.id][int(c.data.removeprefix("adminv:"))]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    token = secrets.token_hex(4)
+    store.add_invite(token, place.name, c.from_user.id)
+    me = await c.bot.get_me()
+    link = f"https://t.me/{me.username}?start=adm_{token}"
+    await c.message.edit_text(
+        f"Приглашение для администратора «{place.name}» создано.\n\n"
+        f"Перешли админу эту ссылку (одноразовая):\n{link}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="← Назад", callback_data=f"admlist:{int(c.data.removeprefix('adminv:'))}")]]))
+    await c.answer("Приглашение отправлено — перешли ссылку админу.")
+
+
+@router.callback_query(F.data.startswith("admdel:"))
+async def callback_admin_del(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    try:
+        _idx_s, aid_i = c.data.removeprefix("admdel:").split(":", 1)
+        idx, aid_i = int(_idx_s), int(aid_i)
+        place = _pending_places[c.from_user.id][idx]
+        aid = store.admins_for(place.name)[aid_i]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    store.del_admin(place.name, aid)
+    await c.answer("Администратор удалён.")
+    c.data = f"admlist:{idx}"
+    await callback_admins(c)
 
 
 @router.callback_query(F.data.startswith("vis:"))
@@ -564,6 +700,151 @@ async def callback_service(c: types.CallbackQuery):
 
 async def perform_checkin(m: types.Message, place, service: str | None = None):
     uid = m.chat.id
+    admins = store.admins_for(place.name)
+    if admins:
+        await _request_admin_ready(m, place, service, admins)
+        return
+    await _run_checkin(m, place, service)
+
+
+def _req_kb(req_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Готов", callback_data=f"reqok:{req_id}"),
+        InlineKeyboardButton(text="✋ Не могу", callback_data=f"reqno:{req_id}"),
+    ]])
+
+
+async def _request_admin_ready(m, place, service, admins) -> None:
+    """Ping every venue admin; run the check-in once one confirms
+    or the owner force-starts. Wait until 22:30 (UTC+3)."""
+    uid = m.chat.id
+    req_id = secrets.token_hex(4)
+    svc = f" · {service}" if service else ""
+    store.put_request(req_id, place.name, service or "", uid, "waiting")
+    _pending_req[req_id] = {"event": asyncio.Event(), "result": None,
+                            "declined": set(), "owner": uid}
+
+    kb = _req_kb(req_id)
+    text = f"🔔 Запрос на визит в «{place.name}»{svc} — готов подтвердить?"
+    for aid in admins:
+        try:
+            r = await m.bot.send_message(aid, text, reply_markup=kb)
+            _track(aid, "admreq", r.message_id)
+        except Exception:
+            pass
+    await _broadcast(m.bot, place.name, uid,
+                     f"📨 Запрос отправлен администраторам «{place.name}»{svc}.",
+                     exclude={uid})
+    kb_o = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="▶️ Запустить без подтверждения",
+                             callback_data=f"reqgo:{req_id}")]])
+    await m.answer(
+        f"⏳ Жду готовности администратора до 22:30…{svc}",
+        reply_markup=kb_o)
+
+    wait_s = _secs_until_close()
+    try:
+        await asyncio.wait_for(
+            _pending_req[req_id]["event"].wait(), timeout=wait_s or 1)
+        result = _pending_req[req_id]["result"]
+    except asyncio.TimeoutError:
+        result = "timeout"
+    pending = _pending_req.pop(req_id, None)
+
+    if result in ("ready", "force"):
+        if result == "ready":
+            await _broadcast(m.bot, place.name, uid,
+                             f"✅ Администратор готов — запускаю "
+                             f"«{place.name}»{svc}.")
+        else:
+            await _broadcast(m.bot, place.name, uid,
+                             f"▶️ Запуск без подтверждения администратора "
+                             f"— «{place.name}»{svc}.", exclude={uid})
+        await _run_checkin(m, place, service, req_id)
+        return
+
+    store.set_request_state(req_id, "closed")
+    if result == "declined":
+        await m.answer(f"Администраторы «{place.name}» не могут принять "
+                       "запрос сейчас.")
+    else:
+        await m.answer(f"⏱ Не дождался готовности администратора "
+                       f"«{place.name}» до 22:30 — запрос закрыт.")
+        await _broadcast(m.bot, place.name, uid,
+                         f"⏱ Запрос в «{place.name}»{svc} истёк "
+                         "без подтверждения.", exclude={uid})
+
+
+@router.callback_query(F.data.startswith("reqok:"))
+async def callback_req_ready(c: types.CallbackQuery):
+    req_id = c.data.removeprefix("reqok:")
+    req = store.get_request(req_id)
+    pend = _pending_req.get(req_id)
+    if not req or not pend or c.from_user.id not in store.admins_for(
+            req["venue"]):
+        return await c.answer("Запрос устарел.", show_alert=True)
+    pend["result"] = "ready"
+    pend["event"].set()
+    store.set_request_state(req_id, "ready")
+    await c.answer("Принято — запускаю запрос.")
+    await c.message.edit_text(c.message.text + "\n\n✅ Ты подтвердил готовность.")
+
+
+@router.callback_query(F.data.startswith("reqno:"))
+async def callback_req_decline(c: types.CallbackQuery):
+    req_id = c.data.removeprefix("reqno:")
+    req = store.get_request(req_id)
+    pend = _pending_req.get(req_id)
+    if not req or not pend or c.from_user.id not in store.admins_for(req["venue"]):
+        return await c.answer("Запрос устарел.", show_alert=True)
+    pend["declined"].add(c.from_user.id)
+    await c.answer("Отклонено.")
+    await c.message.edit_text(c.message.text + "\n\n✋ Ты отклонил.")
+    await _broadcast(c.bot, req["venue"], req["owner"],
+                     f"✋ Администратор {c.from_user.full_name} не может "
+                     f"принять «{req['venue']}».")
+    if pend["declined"] >= set(store.admins_for(req["venue"])):
+        pend["result"] = "declined"
+        pend["event"].set()
+
+
+@router.callback_query(F.data.startswith("reqgo:"))
+async def callback_req_force(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    req_id = c.data.removeprefix("reqgo:")
+    pend = _pending_req.get(req_id)
+    if not pend or pend["owner"] != c.from_user.id:
+        return await c.answer("Запрос устарел.", show_alert=True)
+    pend["result"] = "force"
+    pend["event"].set()
+    await c.answer("Запускаю без подтверждения.")
+    await _drop(c.message)
+
+
+async def _remind_admin(bot, req_id: str) -> None:
+    """Re-ping admins every 10 min while the request stays expired
+    and before the 22:30 cutoff."""
+    while True:
+        await asyncio.sleep(600)
+        req = store.get_request(req_id)
+        if not req or req["state"] != "expired" or _secs_until_close() <= 0:
+            return
+        for aid in store.admins_for(req["venue"]):
+            try:
+                r = await bot.send_message(
+                    aid,
+                    f"⏰ Напоминание: визит в «{req['venue']}» не принят — "
+                    "жми «Перезапустить запрос», когда будешь готов.",
+                    reply_markup=admin_menu())
+                _track(aid, "admreq", r.message_id)
+            except Exception:
+                pass
+
+
+async def _run_checkin(m: types.Message, place, service: str | None = None,
+                       req_id: str | None = None):
+    uid = m.chat.id
     await _untrack(m.bot, uid, "checkin")
     progress = await m.answer(f"Connecting to device at {config.device_serial}…")
     _track(uid, "checkin", progress.message_id)
@@ -600,15 +881,31 @@ async def perform_checkin(m: types.Message, place, service: str | None = None):
             "",
         )
         if outcome == "outcome_confirmed":
-            await progress.edit_text(
-                f"✅ Визит подтверждён администратором.\n{geo}")
+            final = f"✅ Визит подтверждён администратором.\n{geo}"
+            state = "confirmed"
         elif outcome == "outcome_expired":
-            await progress.edit_text(
-                "⏱ Время ожидания истекло — администратор не успел "
-                f"подтвердить. Попробуй ещё раз.\n{geo}")
+            final = ("⏱ Время ожидания истекло — администратор не успел "
+                     f"подтвердить. Попробуй ещё раз.\n{geo}")
+            state = "expired"
         else:
-            await progress.edit_text(
-                f"Request sent — waiting for admin confirmation.\n{geo}")
+            final = f"Request sent — waiting for admin confirmation.\n{geo}"
+            state = "sent"
+        await progress.edit_text(final)
+        if req_id:
+            store.set_request_state(req_id, state)
+        await _broadcast(m.bot, place.name, uid, f"{place.name}: {final}",
+                         exclude={uid})
+        if state == "sent":
+            for aid in store.admins_for(place.name):
+                try:
+                    r = await m.bot.send_message(
+                        aid, f"📲 Запрос в «{place.name}» отправлен — "
+                             "подтверди его в приложении.")
+                    _track(aid, "admreq", r.message_id)
+                except Exception:
+                    pass
+        if state == "expired" and req_id:
+            asyncio.create_task(_remind_admin(m.bot, req_id))
     except Exception as e:
         log.exception("checkin failed")
         sp = device.last_spoof
@@ -617,6 +914,10 @@ async def perform_checkin(m: types.Message, place, service: str | None = None):
             geo = (f"\n📍 {sp[0]},{sp[1]} → {sp[2]:.6f},{sp[3]:.6f} "
                    f"(смещение {sp[4]:.0f} м)")
         await progress.edit_text(f"Failed at {last_step[0]}: {e}{geo}")
+        if req_id:
+            store.set_request_state(req_id, "closed")
+        await _broadcast(m.bot, place.name, uid,
+                         f"{place.name}: ошибка — {e}", exclude={uid})
         try:
             shot = await run_in_thread(device.screenshot)
             ph = await m.answer_photo(
@@ -881,3 +1182,45 @@ async def free_text(m: types.Message):
         "Выбери нужный вариант — или напиши другое название:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
+
+
+@router.message(F.text == BTN_ADM_RESTART)
+async def menu_adm_restart(m: types.Message):
+    uid = m.from_user.id
+    if not store.is_admin(uid):
+        return
+    reqs = store.open_requests_for_admin(uid)
+    if not reqs:
+        return await m.answer("Нет открытых запросов.")
+    if len(reqs) == 1:
+        return await _admin_restart(m, reqs[0])
+    _pending_restart[uid] = reqs
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{r['venue']} ({r['state']})",
+                              callback_data=f"restrt:{i}")]
+        for i, r in enumerate(reqs)])
+    await m.answer("Какой запрос перезапустить?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("restrt:"))
+async def callback_restart_pick(c: types.CallbackQuery):
+    try:
+        req = _pending_restart[c.from_user.id][
+            int(c.data.removeprefix("restrt:"))]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел.", show_alert=True)
+    await c.answer()
+    await _drop(c.message)
+    await _admin_restart(c.message, req)
+
+
+async def _admin_restart(m: types.Message, req: dict) -> None:
+    place = store.get(req["venue"])
+    if not place:
+        return await m.answer("Объект удалён из списка.")
+    await _drop(m)
+    await _broadcast(m.bot, place.name, req["owner"],
+                     f"🔁 Администратор {m.chat.id} просит повторить "
+                     f"«{place.name}» — запускаю.")
+    store.set_request_state(req["id"], "ready")
+    await _run_checkin(m, place, req["service"] or None, req["id"])
