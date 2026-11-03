@@ -28,6 +28,10 @@ class Config:
     device_serial: str = field(
         default_factory=lambda: os.environ.get("DEVICE_SERIAL", "192.168.1.50:5555")
     )
+    # Lock-screen PIN the bot types on wake (leave empty if none).
+    device_pin: str = field(
+        default_factory=lambda: os.environ.get("DEVICE_PIN", "")
+    )
 
     allsports_pkg: str = "by.allsports.holder"
     fakegps_pkg: str = "com.lexa.fakegps"
