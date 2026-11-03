@@ -62,6 +62,8 @@ class Device:
         self.serial = serial
         self.allsports_pkg = allsports_pkg
         self.pin = pin
+        # (req_lat, req_lon, act_lat, act_lon, offset_m) of the last spoof
+        self.last_spoof: tuple | None = None
 
     # ---------- raw adb ----------
 
@@ -96,8 +98,9 @@ class Device:
                 actual_lon,
             )
         else:
-            actual_lat, actual_lon = lat, lon
+            actual_lat, actual_lon, offset_m = lat, lon, 0.0
             log.info("location set exact: %.7f,%.7f", lat, lon)
+        self.last_spoof = (lat, lon, actual_lat, actual_lon, offset_m)
         self._adb(
             "shell", "am", "start-foreground-service",
             "-a", FAKEGPS_START,
