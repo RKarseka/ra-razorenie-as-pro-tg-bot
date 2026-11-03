@@ -32,6 +32,10 @@ _pending_del: dict[int, list[str]] = {}
 _pending_svc: dict[int, object] = {}
 # Service multi-select at venue registration, per user.
 _pending_svc_pick: dict[int, dict] = {}
+# Users asked to type a venue name (from «Добавить объект»).
+_awaiting_place_name: set[int] = set()
+# Geocoding candidates offered to each user.
+_pending_geo: dict[int, list] = {}
 
 BTN_CHECKIN = "Запросить визит"
 BTN_PLACES = "Объекты"
@@ -134,9 +138,9 @@ async def cmd_places(m: types.Message):
     )
 
 
-def geocode(query: str) -> tuple[float, float, str] | None:
-    """Resolve a place name to (lat, lon, display_name) via OSM Nominatim,
-    biased to Belarus."""
+def geocode(query: str, limit: int = 5) -> list[tuple[float, float, str]]:
+    """Resolve a place name to candidate (lat, lon, display_name) tuples
+    via OSM Nominatim, biased to Belarus."""
     import json as _json
     import urllib.parse, urllib.request
 
@@ -144,7 +148,7 @@ def geocode(query: str) -> tuple[float, float, str] | None:
         "q": query,
         "format": "json",
         "countrycodes": "by",
-        "limit": "1",
+        "limit": str(limit),
     })
     req = urllib.request.Request(
         f"https://nominatim.openstreetmap.org/search?{q}",
@@ -152,9 +156,7 @@ def geocode(query: str) -> tuple[float, float, str] | None:
     )
     with urllib.request.urlopen(req, timeout=15) as r:
         data = _json.load(r)
-    if not data:
-        return None
-    return float(data[0]["lat"]), float(data[0]["lon"]), data[0]["display_name"]
+    return [(float(d["lat"]), float(d["lon"]), d["display_name"]) for d in data]
 
 
 @router.message(Command("addplace"))
@@ -173,7 +175,7 @@ async def cmd_addplace(m: types.Message, command: CommandObject):
                 "/addplace Dance Cafe — найду координаты сам"
             )
         try:
-            found = await run_in_thread(geocode, query)
+            found = await run_in_thread(geocode, query, 1)
         except Exception as e:
             log.exception("geocode failed")
             return await m.answer(f"Геокодер недоступен: {e}", reply_markup=main_menu())
@@ -182,11 +184,17 @@ async def cmd_addplace(m: types.Message, command: CommandObject):
                 f"Не нашёл «{query}» на карте. Пришли координаты из Яндекс Карт.",
                 reply_markup=main_menu(),
             )
-        latitude, longitude, disp = found
+        latitude, longitude, disp = found[0]
         await m.answer(
             f"Нашёл: {disp}\nКоординаты: {latitude}, {longitude}",
             reply_markup=main_menu(),
         )
+    await discover_venues(m, m.from_user.id, name, latitude, longitude)
+
+
+async def discover_venues(m: types.Message, uid: int, name: str,
+                          latitude: float, longitude: float) -> None:
+    """Save the typed name if any, set the point and offer nearby venues."""
     if name:
         store.add(name, latitude, longitude)
         await m.answer(f"Saved {name} ({latitude}, {longitude})", reply_markup=main_menu())
@@ -196,7 +204,7 @@ async def cmd_addplace(m: types.Message, command: CommandObject):
         await run_in_thread(device.connect)
         names, shot = await run_in_thread(device.venues_near, latitude, longitude)
         if names:
-            _pending_venues[m.from_user.id] = {
+            _pending_venues[uid] = {
                 "names": names,
                 "lat": latitude,
                 "lon": longitude,
@@ -451,11 +459,10 @@ async def menu_places(m: types.Message):
 @router.message(F.text == BTN_ADD_PLACE)
 @owner_only
 async def menu_add_place(m: types.Message):
+    _awaiting_place_name.add(m.from_user.id)
     await m.answer(
-        "Пришли объект одной строкой:\n"
-        "/addplace имя 53.915323, 27.571478\n\n"
-        "Имя — как в списке Allsports, можно с пробелами.\n"
-        "Координаты можно вставить прямо из Яндекс Карт.",
+        "Напиши название заведения — найду его на карте и предложу варианты.\n"
+        "(или координаты из Яндекс Карт: 53.915323, 27.571478)",
         reply_markup=main_menu(),
     )
 
@@ -550,3 +557,55 @@ async def menu_stop(m: types.Message):
 @owner_only
 async def menu_dump(m: types.Message):
     await cmd_dump(m)
+
+
+@router.callback_query(F.data.startswith("geo:"))
+async def callback_geo_pick(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    try:
+        lat, lon, disp = _pending_geo[c.from_user.id][int(c.data.removeprefix("geo:"))]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — нажми «Добавить объект» заново.",
+                              show_alert=True)
+    await c.answer(disp.split(",")[0])
+    await c.message.edit_text(f"Выбрано: {disp}\nКоординаты: {lat}, {lon}")
+    await discover_venues(c.message, c.from_user.id, "", lat, lon)
+
+
+@router.message(F.text)
+async def free_text(m: types.Message):
+    uid = m.from_user.id
+    if uid not in _awaiting_place_name or m.from_user.id not in config.allowed_users:
+        return
+    _awaiting_place_name.discard(uid)
+    query = m.text.strip()
+    parts = query.replace(",", " ").split()
+    try:
+        lat, lon = float(parts[-2]), float(parts[-1])
+        return await discover_venues(m, uid, "", lat, lon)
+    except (ValueError, IndexError):
+        pass
+    wait = await m.answer(f"Ищу «{query}» на карте…")
+    try:
+        found = await run_in_thread(geocode, query)
+    except Exception as e:
+        log.exception("geocode failed")
+        return await wait.edit_text(f"Геокодер недоступен: {e}")
+    if not found:
+        return await wait.edit_text(
+            f"Не нашёл «{query}» на карте. Пришли координаты из Яндекс Карт."
+        )
+    if len(found) == 1:
+        lat, lon, disp = found[0]
+        await wait.edit_text(f"Нашёл: {disp}\nКоординаты: {lat}, {lon}")
+        return await discover_venues(m, uid, "", lat, lon)
+    _pending_geo[uid] = found
+    buttons = [
+        [InlineKeyboardButton(text=disp[:64], callback_data=f"geo:{i}")]
+        for i, (_lat, _lon, disp) in enumerate(found)
+    ]
+    await wait.edit_text(
+        "Несколько вариантов — выбери нужный:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
