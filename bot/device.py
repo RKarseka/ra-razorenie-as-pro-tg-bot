@@ -315,6 +315,25 @@ class Device:
             tap(confirm_re, timeout=3)
             time.sleep(3)
 
+        # After the request is sent, watch the admin-confirmation outcome:
+        # «Время ожидания истекло» (~2.5 min window) or a confirmed visit.
+        step("await_outcome")
+        expired_re = "(?is).*время\s*ожидани.*истек.*"
+        confirm_re = "(?is).*(визит\s*подтвержд|подтверждён|одобрен|принят).*"
+        outcome = "sent"
+        deadline = time.time() + 200
+        while time.time() < deadline:
+            if (d(descriptionMatches=expired_re).exists
+                    or d(textMatches=expired_re).exists):
+                outcome = "expired"
+                break
+            if (d(descriptionMatches=confirm_re).exists
+                    or d(textMatches=confirm_re).exists):
+                outcome = "confirmed"
+                break
+            time.sleep(5)
+        steps.append(Step(f"outcome_{outcome}", self.screenshot()))
+
         step("result")
         steps.append(Step("result", self.screenshot()))
         return steps
