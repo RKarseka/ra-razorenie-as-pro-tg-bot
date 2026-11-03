@@ -568,6 +568,7 @@ async def callback_geo_pick(c: types.CallbackQuery):
     except (KeyError, IndexError, ValueError):
         return await c.answer("Список устарел — нажми «Добавить объект» заново.",
                               show_alert=True)
+    _awaiting_place_name.discard(c.from_user.id)
     await c.answer(disp.split(",")[0])
     await c.message.edit_text(f"Выбрано: {disp}\nКоординаты: {lat}, {lon}")
     await discover_venues(c.message, c.from_user.id, "", lat, lon)
@@ -578,11 +579,11 @@ async def free_text(m: types.Message):
     uid = m.from_user.id
     if uid not in _awaiting_place_name or m.from_user.id not in config.allowed_users:
         return
-    _awaiting_place_name.discard(uid)
     query = m.text.strip()
     parts = query.replace(",", " ").split()
     try:
         lat, lon = float(parts[-2]), float(parts[-1])
+        _awaiting_place_name.discard(uid)
         return await discover_venues(m, uid, "", lat, lon)
     except (ValueError, IndexError):
         pass
@@ -594,18 +595,15 @@ async def free_text(m: types.Message):
         return await wait.edit_text(f"Геокодер недоступен: {e}")
     if not found:
         return await wait.edit_text(
-            f"Не нашёл «{query}» на карте. Пришли координаты из Яндекс Карт."
+            f"Не нашёл «{query}» на карте.\n"
+            "Напиши другое название или координаты из Яндекс Карт."
         )
-    if len(found) == 1:
-        lat, lon, disp = found[0]
-        await wait.edit_text(f"Нашёл: {disp}\nКоординаты: {lat}, {lon}")
-        return await discover_venues(m, uid, "", lat, lon)
     _pending_geo[uid] = found
     buttons = [
         [InlineKeyboardButton(text=disp[:64], callback_data=f"geo:{i}")]
         for i, (_lat, _lon, disp) in enumerate(found)
     ]
     await wait.edit_text(
-        "Несколько вариантов — выбери нужный:",
+        "Выбери нужный вариант — или напиши другое название:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
