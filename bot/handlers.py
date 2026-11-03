@@ -68,6 +68,12 @@ def place_menu() -> InlineKeyboardMarkup | None:
     )
 
 
+def norm_words(s: str) -> list[str]:
+    """Words the venue matcher looks for (same normalization as device.checkin)."""
+    import re as _re
+    return _re.sub(r"[^\w\s]", " ", s).lower().replace("ё", "е").split()
+
+
 def owner_only(handler):
     @wraps(handler)
     async def wrapper(m: types.Message, *args, **kwargs):
@@ -178,10 +184,12 @@ async def callback_save_place(c: types.CallbackQuery):
         store.remove(pend["saved_as"])
     pend["saved_as"] = name
     await c.answer(f"Сохранено: {name}")
+    words = ", ".join(norm_words(name))
     await c.message.answer(
         f"Сохранено: {name}\n"
         f"Адрес: {detail}\n"
-        f"Координаты: {lat}, {lon}",
+        f"Координаты: {lat}, {lon}\n"
+        f"Слова для выбора в списке: {words}",
         reply_markup=main_menu(),
     )
 
