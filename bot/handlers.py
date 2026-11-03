@@ -52,16 +52,16 @@ BTN_SETTINGS = "Настройки"
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_CHECKIN)],
             [
+                KeyboardButton(text=BTN_CHECKIN),
                 KeyboardButton(text=BTN_PLACES),
                 KeyboardButton(text=BTN_ADD_PLACE),
             ],
             [
+                KeyboardButton(text=BTN_STOP),
                 KeyboardButton(text=BTN_SHOT),
                 KeyboardButton(text=BTN_STATUS),
             ],
-            [KeyboardButton(text=BTN_STOP)],
             [KeyboardButton(text=BTN_DUMP), KeyboardButton(text=BTN_UPDATE),
              KeyboardButton(text=BTN_SETTINGS)],
         ],
