@@ -33,13 +33,14 @@ async def greet_users(bot: Bot):
     the previous boot's transient messages."""
     for uid in config.allowed_users:
         try:
-            await _untrack(bot, uid, "update")
-            await _untrack(bot, uid, "hello")
+            for kind in ("update", "menu", "status", "shot", "dump",
+                         "settings"):
+                await _untrack(bot, uid, kind)
             r = await bot.send_message(
                 uid, "Бот запущен и готов к работе.",
                 reply_markup=main_menu(),
             )
-            _track(uid, "hello", r.message_id)
+            _track(uid, "menu", r.message_id)
         except Exception:
             logging.exception("greeting to %s failed", uid)
 
