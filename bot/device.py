@@ -167,31 +167,42 @@ class Device:
         d = u2.connect(self.serial)
         steps.append(Step("allsports_home", self.screenshot()))
 
+        # Flutter exposes labels via content-desc (often multi-line, e.g.
+        # "Новый визит\nВкладка 2 из 3"); `text` stays empty. UiSelector
+        # regexes must match the WHOLE string, so (?s) is needed to let
+        # `.*` cross the \n.
+        def tap(pattern: str, timeout: float) -> bool:
+            return (
+                d(descriptionMatches=pattern).click_exists(timeout=timeout)
+                or d(textMatches=pattern).click_exists(timeout=3)
+            )
+
         step("new_checkin_tab")
-        # Bottom-nav "Новый визит" tab. Loose match: Flutter semantics may
-        # carry extra text; "новый визит" can't collide with body copy like
-        # "Осталось 4 визита".
-        new_visit_re = "(?i).*(new (visit|check.?in)|новый визит).*"
-        if not d(descriptionMatches=new_visit_re).click_exists(timeout=5):
-            d(textMatches=new_visit_re).click_exists(timeout=5)
+        # Bottom-nav "Новый визит" tab. "новый визит" can't collide with
+        # body copy like "Осталось 4 визита".
+        new_visit_re = "(?is).*(new (visit|check.?in)|новый визит).*"
+        tap(new_visit_re, timeout=5)
         time.sleep(3)
         steps.append(Step("new_visit_screen", self.screenshot()))
 
         step("enter_by_location")
         # "Новый визит" menu -> "Вход по локации" opens the geo venue list.
-        loc_re = "(?i).*(вход по локац|by location|enter by location).*"
-        if not d(textMatches=loc_re).click_exists(timeout=8):
+        loc_re = "(?is).*(вход по локац|by location|enter by location).*"
+        if not tap(loc_re, timeout=8):
             raise DeviceError("'Enter by location' option not found")
         time.sleep(3)
         steps.append(Step("venue_list", self.screenshot()))
 
         step("select_venue")
-        # The venue list is geo-filtered; find our place by name and tap it.
-        name_re = "(?i).*" + re.escape(place_name) + ".*"
-        found = d(textMatches=name_re).click_exists(timeout=10)
+        # The venue list is geo-filtered; venue desc is
+        # "Название\nNN м от вас" — place_name must be a substring of it.
+        name_re = "(?is).*" + re.escape(place_name) + ".*"
+        found = tap(name_re, timeout=10)
         if not found and d(scrollable=True).exists:
             d(scrollable=True).scroll.toBeginning()
-            if d(scrollable=True).scroll.to(textMatches=name_re):
+            if d(scrollable=True).scroll.to(descriptionMatches=name_re):
+                found = d(descriptionMatches=name_re).click_exists(timeout=3)
+            elif d(scrollable=True).scroll.to(textMatches=name_re):
                 found = d(textMatches=name_re).click_exists(timeout=3)
         steps.append(Step("venue_selected", self.screenshot()))
         if not found:
@@ -200,19 +211,20 @@ class Device:
         step("tap_checkin")
         time.sleep(2)
         # Supplier bottom sheet -> Check in button
-        checkin_btn_re = "(?i).*(check.?in|отметиться|отметить|чек.?ин).*"
-        if not d(textMatches=checkin_btn_re).click_exists(timeout=8):
+        checkin_btn_re = "(?is).*(check.?in|отметиться|отметить|чек.?ин).*"
+        if not tap(checkin_btn_re, timeout=8):
             raise DeviceError("'Check in' button not found")
         time.sleep(4)
 
         step("confirm")
         # Possible extra dialog ("Choose a check-in method" / confirm).
-        if d(textMatches="(?i).*(choose a check-in method|способ).*").exists:
-            d(textMatches="(?i).*(location|geo|near me|гео|локац).*").click_exists(timeout=5)
+        if d(descriptionMatches="(?is).*(choose a check-in method|способ).*").exists \
+                or d(textMatches="(?is).*(choose a check-in method|способ).*").exists:
+            tap("(?is).*(location|geo|near me|гео|локац).*", timeout=5)
             time.sleep(3)
-        if d(textMatches="(?i).*(confirm|yes|ok|подтвердить|да|ок).*").exists:
-            d(textMatches="(?i).*(confirm|yes|ok|подтвердить|да|ок).*").click_exists(timeout=3)
-            time.sleep(3)
+        confirm_re = "(?is).*(confirm|yes|ok|подтвердить|да\b|ок\b).*"
+        tap(confirm_re, timeout=3)
+        time.sleep(3)
 
         step("result")
         steps.append(Step("result", self.screenshot()))
