@@ -123,6 +123,14 @@ class Device:
             "-c", "android.intent.category.LAUNCHER", "1",
         )
 
+    def close_allsports(self) -> None:
+        self._adb("shell", "am", "force-stop", self.allsports_pkg)
+
+    def stop_visit(self) -> None:
+        """Cancel the spoof and close Allsports."""
+        self.clear_location()
+        self.close_allsports()
+
     def screenshot(self) -> bytes:
         r = subprocess.run(
             [ADB, "-s", self.serial, "exec-out", "screencap", "-p"],

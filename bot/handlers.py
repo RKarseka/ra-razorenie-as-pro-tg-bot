@@ -43,7 +43,7 @@ BTN_PLACES = "Объекты"
 BTN_ADD_PLACE = "Добавить объект"
 BTN_SHOT = "Скриншот"
 BTN_STATUS = "Статус"
-BTN_STOP = "Остановить геопозицию"
+BTN_STOP = "Остановить визит"
 BTN_DUMP = "Дамп UI"
 BTN_UPDATE = "Обновить бота"
 
@@ -111,7 +111,7 @@ async def cmd_help(m: types.Message):
         "/addplace name lat lon — save a venue\n"
         "/delplace name — remove a venue\n"
         "/checkin name — spoof location & request check-in\n"
-        "/stop — stop location spoof\n"
+        "/stop — stop visit (clear spoof, close Allsports)\n"
         "/shot — screenshot the duty phone\n"
         "/dump — UI hierarchy for selector calibration\n"
         "/status — device connectivity",
@@ -627,8 +627,9 @@ async def cmd_update(m: types.Message):
 async def cmd_stop(m: types.Message):
     try:
         await run_in_thread(device.connect)
-        await run_in_thread(device.clear_location)
-        await m.answer("Spoof stopped", reply_markup=main_menu())
+        await run_in_thread(device.stop_visit)
+        await m.answer("Визит остановлен: геопозиция снята, Allsports закрыт",
+                       reply_markup=main_menu())
     except DeviceError as e:
         await m.answer(f"Failed: {e}")
 
