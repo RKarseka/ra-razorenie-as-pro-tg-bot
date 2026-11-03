@@ -133,17 +133,58 @@ async def cmd_places(m: types.Message):
     )
 
 
+def geocode(query: str) -> tuple[float, float, str] | None:
+    """Resolve a place name to (lat, lon, display_name) via OSM Nominatim,
+    biased to Belarus."""
+    import json as _json
+    import urllib.parse, urllib.request
+
+    q = urllib.parse.urlencode({
+        "q": query,
+        "format": "json",
+        "countrycodes": "by",
+        "limit": "1",
+    })
+    req = urllib.request.Request(
+        f"https://nominatim.openstreetmap.org/search?{q}",
+        headers={"User-Agent": "as-checkin-bot/1.0"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:
+        data = _json.load(r)
+    if not data:
+        return None
+    return float(data[0]["lat"]), float(data[0]["lon"]), data[0]["display_name"]
+
+
 @router.message(Command("addplace"))
 @owner_only
 async def cmd_addplace(m: types.Message, command: CommandObject):
+    name = ""
     try:
         parts = command.args.replace(",", " ").split()
         latitude, longitude = float(parts[-2]), float(parts[-1])
         name = " ".join(parts[:-2])
     except (ValueError, AttributeError, IndexError):
-        return await m.answer(
-            "Usage: /addplace [name] lat lon (имя можно с пробелами или опустить)\n"
-            "Yandex Maps format is supported: /addplace 53.915323, 27.571478"
+        query = (command.args or "").strip()
+        if not query:
+            return await m.answer(
+                "Usage: /addplace [name] lat lon — или просто название:\n"
+                "/addplace Dance Cafe — найду координаты сам"
+            )
+        try:
+            found = await run_in_thread(geocode, query)
+        except Exception as e:
+            log.exception("geocode failed")
+            return await m.answer(f"Геокодер недоступен: {e}", reply_markup=main_menu())
+        if not found:
+            return await m.answer(
+                f"Не нашёл «{query}» на карте. Пришли координаты из Яндекс Карт.",
+                reply_markup=main_menu(),
+            )
+        latitude, longitude, disp = found
+        await m.answer(
+            f"Нашёл: {disp}\nКоординаты: {latitude}, {longitude}",
+            reply_markup=main_menu(),
         )
     if name:
         store.add(name, latitude, longitude)
