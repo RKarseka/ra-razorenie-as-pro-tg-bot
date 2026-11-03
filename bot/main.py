@@ -22,7 +22,6 @@ BOT_COMMANDS = [
     BotCommand(command="stop", description="Остановить геопозицию"),
     BotCommand(command="dump", description="Дамп UI"),
     BotCommand(command="update", description="Обновить код и перезапустить бота"),
-    BotCommand(command="start", description="Меню"),
 ]
 
 
