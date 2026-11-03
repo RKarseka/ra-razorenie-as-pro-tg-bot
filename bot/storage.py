@@ -1,7 +1,8 @@
 """SQLite storage for check-in places."""
 
+import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -10,6 +11,7 @@ class Place:
     lat: float
     lon: float
     address: str = ""
+    services: list[str] = field(default_factory=list)
 
 
 class PlaceStore:
@@ -20,18 +22,25 @@ class PlaceStore:
             "  name TEXT PRIMARY KEY COLLATE NOCASE,"
             "  lat REAL NOT NULL,"
             "  lon REAL NOT NULL,"
-            "  address TEXT NOT NULL DEFAULT '')"
+            "  address TEXT NOT NULL DEFAULT '',"
+            "  services TEXT NOT NULL DEFAULT '[]')"
         )
-        try:
-            self.db.execute("ALTER TABLE places ADD COLUMN address TEXT NOT NULL DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass
+        for col in ("address TEXT NOT NULL DEFAULT ''",
+                    "services TEXT NOT NULL DEFAULT '[]'"):
+            try:
+                self.db.execute(f"ALTER TABLE places ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
         self.db.commit()
 
-    def add(self, name: str, lat: float, lon: float, address: str = "") -> None:
+    def add(self, name: str, lat: float, lon: float, address: str = "",
+            services: list[str] | None = None) -> None:
+        prev = self.get(name)
+        svc = services if services is not None else (prev.services if prev else [])
         self.db.execute(
-            "INSERT OR REPLACE INTO places(name, lat, lon, address) VALUES(?,?,?,?)",
-            (name, lat, lon, address),
+            "INSERT OR REPLACE INTO places(name, lat, lon, address, services) "
+            "VALUES(?,?,?,?,?)",
+            (name, lat, lon, address, json.dumps(svc, ensure_ascii=False)),
         )
         self.db.commit()
 
@@ -40,14 +49,21 @@ class PlaceStore:
         self.db.commit()
         return cur.rowcount > 0
 
+    @staticmethod
+    def _row(r) -> Place:
+        return Place(r[0], r[1], r[2], r[3], json.loads(r[4] or "[]"))
+
     def get(self, name: str) -> Place | None:
         row = self.db.execute(
-            "SELECT name, lat, lon, address FROM places WHERE name=?", (name,)
+            "SELECT name, lat, lon, address, services FROM places WHERE name=?",
+            (name,),
         ).fetchone()
-        return Place(*row) if row else None
+        return self._row(row) if row else None
 
     def list(self) -> list[Place]:
         return [
-            Place(*r)
-            for r in self.db.execute("SELECT name, lat, lon, address FROM places ORDER BY name")
+            self._row(r)
+            for r in self.db.execute(
+                "SELECT name, lat, lon, address, services FROM places ORDER BY name"
+            )
         ]
