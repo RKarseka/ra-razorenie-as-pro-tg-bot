@@ -26,6 +26,8 @@ device = Device(config.device_serial, config.allsports_pkg)
 
 # Pending venue picks per user: names discovered by /addplace.
 _pending_venues: dict[int, dict] = {}
+# Place names shown by /places, so delete callbacks fit 64-byte callback_data.
+_pending_del: dict[int, list[str]] = {}
 
 BTN_CHECKIN = "Запросить визит"
 BTN_PLACES = "Объекты"
@@ -116,7 +118,15 @@ async def cmd_places(m: types.Message):
         f"• {p.name}: {p.lat}, {p.lon}" + (f" — {p.address}" if p.address else "")
         for p in places
     ]
-    await m.answer("\n".join(lines), reply_markup=main_menu())
+    _pending_del[m.from_user.id] = [p.name for p in places]
+    buttons = [
+        [InlineKeyboardButton(text=f"🗑 {p.name}", callback_data=f"del:{i}")]
+        for i, p in enumerate(places)
+    ]
+    await m.answer(
+        "\n".join(lines) + "\n\n🗑 — удалить объект",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
 
 
 @router.message(Command("addplace"))
@@ -165,6 +175,21 @@ async def cmd_addplace(m: types.Message, command: CommandObject):
     except Exception as e:
         log.exception("venues_near failed")
         await progress.edit_text(f"Не удалось открыть список: {e}")
+
+
+@router.callback_query(F.data.startswith("del:"))
+async def callback_del_place(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    try:
+        name = _pending_del[c.from_user.id][int(c.data.removeprefix("del:"))]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — открой «Объекты» заново.", show_alert=True)
+    if store.remove(name):
+        await c.answer(f"Удалено: {name}")
+        await c.message.answer(f"Removed {name}", reply_markup=main_menu())
+    else:
+        await c.answer("Уже удалён.", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("save:"))
