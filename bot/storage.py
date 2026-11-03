@@ -9,6 +9,7 @@ class Place:
     name: str
     lat: float
     lon: float
+    address: str = ""
 
 
 class PlaceStore:
@@ -18,14 +19,19 @@ class PlaceStore:
             "CREATE TABLE IF NOT EXISTS places("
             "  name TEXT PRIMARY KEY COLLATE NOCASE,"
             "  lat REAL NOT NULL,"
-            "  lon REAL NOT NULL)"
+            "  lon REAL NOT NULL,"
+            "  address TEXT NOT NULL DEFAULT '')"
         )
+        try:
+            self.db.execute("ALTER TABLE places ADD COLUMN address TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
         self.db.commit()
 
-    def add(self, name: str, lat: float, lon: float) -> None:
+    def add(self, name: str, lat: float, lon: float, address: str = "") -> None:
         self.db.execute(
-            "INSERT OR REPLACE INTO places(name, lat, lon) VALUES(?,?,?)",
-            (name, lat, lon),
+            "INSERT OR REPLACE INTO places(name, lat, lon, address) VALUES(?,?,?,?)",
+            (name, lat, lon, address),
         )
         self.db.commit()
 
@@ -36,12 +42,12 @@ class PlaceStore:
 
     def get(self, name: str) -> Place | None:
         row = self.db.execute(
-            "SELECT name, lat, lon FROM places WHERE name=?", (name,)
+            "SELECT name, lat, lon, address FROM places WHERE name=?", (name,)
         ).fetchone()
         return Place(*row) if row else None
 
     def list(self) -> list[Place]:
         return [
             Place(*r)
-            for r in self.db.execute("SELECT name, lat, lon FROM places ORDER BY name")
+            for r in self.db.execute("SELECT name, lat, lon, address FROM places ORDER BY name")
         ]
