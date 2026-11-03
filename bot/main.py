@@ -8,7 +8,7 @@ from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from .config import config
-from .handlers import router
+from .handlers import router, main_menu
 
 logging.basicConfig(level=logging.INFO)
 
@@ -37,11 +37,24 @@ async def on_startup(bot: Bot):
     logging.info("webhook set to %s", url)
 
 
+async def greet_users(bot: Bot):
+    """Restore the reply keyboard after every (re)start."""
+    for uid in config.allowed_users:
+        try:
+            await bot.send_message(
+                uid, "Бот запущен и готов к работе.",
+                reply_markup=main_menu(),
+            )
+        except Exception:
+            logging.exception("greeting to %s failed", uid)
+
+
 def main():
     bot = Bot(token=config.bot_token)
     dp = Dispatcher()
     dp.include_router(router)
     dp.startup.register(set_commands)
+    dp.startup.register(greet_users)
 
     if config.mode != "webhook":
         import asyncio
