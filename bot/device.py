@@ -140,7 +140,7 @@ class Device:
     # ---------- check-in flow ----------
 
     def checkin(self, place_name: str, lat: float, lon: float,
-                on_step=None) -> list[Step]:
+                on_step=None, service: str | None = None) -> list[Step]:
         """Drive the Allsports check-in. Returns per-step screenshots.
 
         on_step(name) is called after each stage for progress reporting.
@@ -190,8 +190,7 @@ class Device:
         # Venue desc is "Название\nАдрес". Strict match only: the row's
         # normalized title must equal the saved name — no fuzzy fallback,
         # so a near-miss can never tap the wrong venue.
-        def norm(s: str) -> str:
-            return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", s).lower().replace("ё", "е")).strip()
+        norm = self._norm
 
         def find_venue():
             for el in d(clickable=True):
@@ -224,10 +223,30 @@ class Device:
         if target is None:
             raise DeviceError(f"venue '{place_name}' not found in geo list")
 
+        if service is not None:
+            step("select_service")
+            # «Выбор активности»: strict title match on the saved service name.
+            svc = None
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                for el in d(clickable=True):
+                    desc = el.info.get("contentDescription") or ""
+                    if norm(desc.splitlines()[0] if desc else "") == norm(service):
+                        svc = el
+                        break
+                if svc is not None:
+                    break
+                time.sleep(1)
+            steps.append(Step("service_selected", self.screenshot()))
+            if svc is None:
+                raise DeviceError(f"service '{service}' not found")
+            svc.click()
+            time.sleep(2)
+
         step("tap_checkin")
         time.sleep(2)
         # Supplier bottom sheet -> Check in button
-        checkin_btn_re = "(?is).*(check.?in|отметиться|отметить|чек.?ин).*"
+        checkin_btn_re = "(?is).*(check.?in|отметиться|отметить|чек.?ин|записаться|забронировать|посетить).*"
         if not tap(checkin_btn_re, timeout=8):
             raise DeviceError("'Check in' button not found")
         time.sleep(4)
@@ -247,6 +266,13 @@ class Device:
         return steps
 
     # ---------- venue discovery ----------
+
+    @staticmethod
+    def _norm(s: str) -> str:
+        return re.sub(
+            r"\s+", " ",
+            re.sub(r"[^\w\s]", " ", s).lower().replace("ё", "е"),
+        ).strip()
 
     @staticmethod
     def _tap(d, pattern: str, timeout: float) -> bool:
@@ -311,6 +337,57 @@ class Device:
                 collect()
 
         return names, shot
+
+    def services_of_venue(self, place_name: str, lat: float, lon: float) -> list[str]:
+        """Open the venue in the geo list and collect its «Выбор активности»
+        service titles. Navigation is restored with Back afterwards."""
+        import uiautomator2 as u2
+
+        self.wake_and_unlock()
+        self.set_location(lat, lon, jitter=False)
+        time.sleep(3)
+        self.open_allsports()
+        time.sleep(6)
+
+        d = u2.connect(self.serial)
+        self._open_geo_list(d)
+        time.sleep(2)
+
+        norm = self._norm
+        target = None
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            for el in d(clickable=True):
+                desc = el.info.get("contentDescription") or ""
+                if norm(desc.splitlines()[0] if desc else "") == norm(place_name):
+                    target = el
+                    break
+            if target is not None:
+                break
+            time.sleep(1)
+        if target is None:
+            raise DeviceError(f"venue '{place_name}' not found in geo list")
+        target.click()
+        time.sleep(4)
+
+        skip = {
+            "объекты", "новый визит", "профиль", "назад",
+            "вход по локации", "выбор активности",
+        }
+        services: list[str] = []
+        for el in d(clickable=True):
+            desc = (el.info.get("contentDescription") or "").splitlines()
+            if not desc:
+                continue
+            title = desc[0].strip()
+            body = norm(" ".join(desc))
+            if not title or "вкладка" in body or body in skip:
+                continue
+            if title not in services:
+                services.append(title)
+
+        d.press("back")
+        return services
 
     def dump_ui(self) -> str:
         """Current window hierarchy for selector calibration."""

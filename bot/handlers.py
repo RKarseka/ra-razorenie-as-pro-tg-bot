@@ -28,6 +28,8 @@ device = Device(config.device_serial, config.allsports_pkg)
 _pending_venues: dict[int, dict] = {}
 # Place names shown by /places, so delete callbacks fit 64-byte callback_data.
 _pending_del: dict[int, list[str]] = {}
+# Venue whose services were offered for the visit, per user.
+_pending_svc: dict[int, object] = {}
 
 BTN_CHECKIN = "Запросить визит"
 BTN_PLACES = "Объекты"
@@ -217,6 +219,20 @@ async def callback_save_place(c: types.CallbackQuery):
         reply_markup=main_menu(),
     )
 
+    prog = await c.message.answer("Собираю услуги заведения…")
+    try:
+        await run_in_thread(device.connect)
+        services = await run_in_thread(device.services_of_venue, name, lat, lon)
+        store.add(name, lat, lon, address=detail, services=services)
+        if services:
+            listing = "\n".join(f"• {s}" for s in services)
+            await prog.edit_text(f"Услуги «{name}»:\n" + listing)
+        else:
+            await prog.edit_text("Услуги не распарсились.")
+    except Exception as e:
+        log.exception("services_of_venue failed")
+        await prog.edit_text(f"Не удалось собрать услуги: {e}")
+
 
 @router.message(Command("delplace"))
 @owner_only
@@ -235,10 +251,41 @@ async def cmd_checkin(m: types.Message, command: CommandObject):
     if not place:
         return await m.answer("Unknown place. /places to list", reply_markup=main_menu())
 
-    await perform_checkin(m, place)
+    await offer_services(m, m.from_user.id, place)
 
 
-async def perform_checkin(m: types.Message, place):
+async def offer_services(m: types.Message, uid: int, place) -> None:
+    """Pick a saved service first when the venue has any, else check in."""
+    if place.services:
+        _pending_svc[uid] = place
+        buttons = [
+            [InlineKeyboardButton(text=s, callback_data=f"svc:{i}")]
+            for i, s in enumerate(place.services)
+        ]
+        await m.answer(
+            f"{place.name}: выбери услугу",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+    else:
+        await perform_checkin(m, place)
+
+
+@router.callback_query(F.data.startswith("svc:"))
+async def callback_service(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    place = _pending_svc.get(c.from_user.id)
+    try:
+        service = place.services[int(c.data.removeprefix("svc:"))]
+    except (AttributeError, IndexError, ValueError):
+        return await c.answer(
+            "Список устарел — выбери объект заново.", show_alert=True
+        )
+    await c.answer(service)
+    await perform_checkin(c.message, place, service)
+
+
+async def perform_checkin(m: types.Message, place, service: str | None = None):
     progress = await m.answer(f"Connecting to device at {config.device_serial}…")
     loop = asyncio.get_running_loop()
     last_step = ["connect"]
@@ -259,7 +306,8 @@ async def perform_checkin(m: types.Message, place):
         await run_in_thread(device.connect)
         await progress.edit_text(f"Spoofing to {place.name} ({place.lat}, {place.lon})…")
         steps = await run_in_thread(
-            device.checkin, place.name, place.lat, place.lon, on_step=on_step
+            device.checkin, place.name, place.lat, place.lon,
+            on_step=on_step, service=service,
         )
         await progress.edit_text("Request sent — waiting for admin confirmation.")
         for s in steps:
@@ -298,7 +346,7 @@ async def callback_checkin(c: types.CallbackQuery):
     if not place:
         return await c.answer("Объект не найден.", show_alert=True)
     await c.answer()
-    await perform_checkin(c.message, place)
+    await offer_services(c.message, c.from_user.id, place)
 
 
 @router.message(F.text == BTN_PLACES)
