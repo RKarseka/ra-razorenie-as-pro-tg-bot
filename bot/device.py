@@ -187,25 +187,19 @@ class Device:
         steps.append(Step("venue_list", self.screenshot()))
 
         step("select_venue")
-        # Venue desc is "Название\nАдрес". Match precisely: a row wins when
-        # every word of place_name appears in its desc (any position), and
-        # an exact normalized title match outranks a partial one. This keeps
-        # "flexico куйбышева" distinct from "flexico машерова".
+        # Venue desc is "Название\nАдрес". Strict match only: the row's
+        # normalized title must equal the saved name — no fuzzy fallback,
+        # so a near-miss can never tap the wrong venue.
         def norm(s: str) -> str:
-            return re.sub(r"[^\w\s]", " ", s).lower().replace("ё", "е")
+            return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", s).lower().replace("ё", "е")).strip()
 
         def find_venue():
-            wanted = norm(place_name).split()
-            best = None
             for el in d(clickable=True):
                 desc = el.info.get("contentDescription") or ""
                 title = norm(desc.splitlines()[0] if desc else "")
-                body = norm(desc)
                 if title == norm(place_name):
-                    return el  # exact title match, unambiguous
-                if all(w in body for w in wanted) and best is None:
-                    best = el
-            return best
+                    return el
+            return None
 
         target = find_venue()
         if target is None and d(scrollable=True).exists:
