@@ -129,23 +129,16 @@ async def cmd_addplace(m: types.Message, command: CommandObject):
         names, shot = await run_in_thread(device.venues_near, latitude, longitude)
         if names:
             listing = "\n".join(f"• {n}" for n in names)
-            await progress.edit_text(
-                "Заведения рядом с этой точкой:\n" + listing,
-                reply_markup=main_menu(),
-            )
+            await progress.edit_text("Заведения рядом с этой точкой:\n" + listing)
         else:
-            await progress.edit_text(
-                "Список заведений не распарсился — вот скриншот.",
-                reply_markup=main_menu(),
-            )
+            await progress.edit_text("Список заведений не распарсился — вот скриншот.")
         await m.answer_photo(
             BufferedInputFile(shot, filename="venues.png"),
             caption="Вход по локации",
         )
     except Exception as e:
         log.exception("venues_near failed")
-        await progress.edit_text(f"Не удалось открыть список: {e}",
-                                 reply_markup=main_menu())
+        await progress.edit_text(f"Не удалось открыть список: {e}")
 
 
 @router.message(Command("delplace"))
@@ -191,7 +184,7 @@ async def perform_checkin(m: types.Message, place):
         steps = await run_in_thread(
             device.checkin, place.name, place.lat, place.lon, on_step=on_step
         )
-        await progress.edit_text("Request sent — waiting for admin confirmation.", reply_markup=main_menu())
+        await progress.edit_text("Request sent — waiting for admin confirmation.")
         for s in steps:
             if s.screenshot:
                 await m.answer_photo(
@@ -200,7 +193,7 @@ async def perform_checkin(m: types.Message, place):
                 )
     except Exception as e:
         log.exception("checkin failed")
-        await progress.edit_text(f"Failed at {last_step[0]}: {e}", reply_markup=main_menu())
+        await progress.edit_text(f"Failed at {last_step[0]}: {e}")
         try:
             shot = await run_in_thread(device.screenshot)
             await m.answer_photo(BufferedInputFile(shot, filename="screen.png"))
