@@ -111,9 +111,29 @@ async def _drop(msg) -> None:
         pass
 
 
+def _track(uid: int, kind: str, *ids: int) -> None:
+    """Persist transient message ids so they can be deleted later,
+    including after a restart."""
+    store.set_setting(f"trk:{uid}:{kind}", ",".join(str(i) for i in ids if i))
+
+
+async def _untrack(bot, uid: int, kind: str) -> None:
+    """Delete the stored transient messages of a kind and clear the list."""
+    raw = store.get_setting(f"trk:{uid}:{kind}", "")
+    if not raw:
+        return
+    for s in raw.split(","):
+        try:
+            await bot.delete_message(uid, int(s))
+        except Exception:
+            pass
+    store.set_setting(f"trk:{uid}:{kind}", "")
+
+
 @router.message(Command("start", "help"))
 @owner_only
 async def cmd_help(m: types.Message):
+    await _drop(m)
     await m.answer("Выбери действие кнопкой ниже.",
                    reply_markup=main_menu())
 
@@ -646,6 +666,8 @@ async def cmd_update(m: types.Message):
     """Self-update: git pull in the repo dir + restart the systemd unit."""
     import os
 
+    await _drop(m)
+
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     proc = await asyncio.create_subprocess_exec(
         "git", "-C", repo_dir, "pull", "--ff-only",
@@ -654,14 +676,17 @@ async def cmd_update(m: types.Message):
     )
     out, _ = await proc.communicate()
     text = out.decode(errors="replace").strip()[:3500]
-    await m.answer(f"```\n{text}\n```", parse_mode="Markdown")
-    await m.answer("Перезапускаю бота… (если он молчит пару минут — проверь journalctl)")
+    m1 = await m.answer(f"```\n{text}\n```", parse_mode="Markdown")
+    m2 = await m.answer(
+        "Перезапускаю бота… (если он молчит пару минут — проверь journalctl)")
+    _track(m.from_user.id, "update", m1.message_id, m2.message_id)
     await asyncio.create_subprocess_exec("systemctl", "restart", "asbot")
 
 
 @router.message(Command("stop"))
 @owner_only
 async def cmd_stop(m: types.Message):
+    await _drop(m)
     try:
         await run_in_thread(device.connect)
         await run_in_thread(device.stop_visit)
@@ -674,10 +699,13 @@ async def cmd_stop(m: types.Message):
 @router.message(Command("shot"))
 @owner_only
 async def cmd_shot(m: types.Message):
+    await _drop(m)
+    await _untrack(m.bot, m.from_user.id, "shot")
     try:
         await run_in_thread(device.connect)
         png = await run_in_thread(device.screenshot)
-        await m.answer_photo(BufferedInputFile(png, filename="screen.png"))
+        r = await m.answer_photo(BufferedInputFile(png, filename="screen.png"))
+        _track(m.from_user.id, "shot", r.message_id)
     except DeviceError as e:
         await m.answer(f"Failed: {e}")
 
@@ -685,13 +713,16 @@ async def cmd_shot(m: types.Message):
 @router.message(Command("dump"))
 @owner_only
 async def cmd_dump(m: types.Message):
+    await _drop(m)
+    await _untrack(m.bot, m.from_user.id, "dump")
     try:
         await run_in_thread(device.connect)
         xml = await run_in_thread(device.dump_ui)
-        await m.answer_document(
+        r = await m.answer_document(
             BufferedInputFile(xml.encode(), filename="hierarchy.xml"),
             caption="UI hierarchy",
         )
+        _track(m.from_user.id, "dump", r.message_id)
     except Exception as e:
         log.exception("dump failed")
         await m.answer(f"Failed: {e}")
@@ -700,12 +731,16 @@ async def cmd_dump(m: types.Message):
 @router.message(Command("status"))
 @owner_only
 async def cmd_status(m: types.Message):
+    await _drop(m)
+    await _untrack(m.bot, m.from_user.id, "status")
     try:
         await run_in_thread(device.connect)
         app = await run_in_thread(device.current_app)
-        await m.answer(f"Device OK\nForeground: {app}", reply_markup=main_menu())
+        r = await m.answer(f"Device OK\nForeground: {app}",
+                           reply_markup=main_menu())
     except DeviceError as e:
-        await m.answer(f"Device unreachable: {e}", reply_markup=main_menu())
+        r = await m.answer(f"Device unreachable: {e}", reply_markup=main_menu())
+    _track(m.from_user.id, "status", r.message_id)
 
 
 @router.message(F.text == BTN_SHOT)
@@ -740,7 +775,10 @@ def _settings_kb() -> InlineKeyboardMarkup:
 @router.message(Command("settings"))
 @owner_only
 async def menu_settings(m: types.Message):
-    await m.answer("Настройки:", reply_markup=_settings_kb())
+    await _drop(m)
+    await _untrack(m.bot, m.from_user.id, "settings")
+    r = await m.answer("Настройки:", reply_markup=_settings_kb())
+    _track(m.from_user.id, "settings", r.message_id)
 
 
 @router.callback_query(F.data == "setjitter")
