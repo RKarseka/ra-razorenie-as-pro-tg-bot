@@ -147,10 +147,16 @@ async def perform_checkin(m: types.Message, place):
     loop = asyncio.get_running_loop()
     last_step = ["connect"]
 
+    async def _set_progress(text: str) -> None:
+        try:
+            await progress.edit_text(text)
+        except Exception:
+            pass
+
     def on_step(name: str) -> None:
         last_step[0] = name
         asyncio.run_coroutine_threadsafe(
-            progress.edit_text(f"{place.name}: {name}…"), loop
+            _set_progress(f"{place.name}: {name}…"), loop
         )
 
     try:
