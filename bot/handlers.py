@@ -737,6 +737,7 @@ def _settings_kb() -> InlineKeyboardMarkup:
 
 
 @router.message(F.text == BTN_SETTINGS)
+@router.message(Command("settings"))
 @owner_only
 async def menu_settings(m: types.Message):
     await m.answer("Настройки:", reply_markup=_settings_kb())
