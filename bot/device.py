@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import io
 import logging
+import math
+import random
 import subprocess
 import time
 from dataclasses import dataclass
@@ -19,6 +21,9 @@ ADB = "adb"
 FAKEGPS_START = "com.lexa.fakegps.START"
 FAKEGPS_STOP = "com.lexa.fakegps.STOP"
 FAKEGPS_SERVICE = "com.lexa.fakegps/.FakeGPSService"
+EARTH_RADIUS_M = 6_371_000
+LOCATION_JITTER_MIN_M = 10
+LOCATION_JITTER_MAX_M = 30
 
 
 class DeviceError(RuntimeError):
@@ -29,6 +34,25 @@ class DeviceError(RuntimeError):
 class Step:
     name: str
     screenshot: bytes | None = None
+
+
+def jitter_location(lat: float, lon: float) -> tuple[float, float, float]:
+    distance_m = random.uniform(LOCATION_JITTER_MIN_M, LOCATION_JITTER_MAX_M)
+    bearing = random.uniform(0, 2 * math.pi)
+    angular_distance = distance_m / EARTH_RADIUS_M
+    lat_rad = math.radians(lat)
+    lon_rad = math.radians(lon)
+
+    jittered_lat = math.asin(
+        math.sin(lat_rad) * math.cos(angular_distance)
+        + math.cos(lat_rad) * math.sin(angular_distance) * math.cos(bearing)
+    )
+    jittered_lon = lon_rad + math.atan2(
+        math.sin(bearing) * math.sin(angular_distance) * math.cos(lat_rad),
+        math.cos(angular_distance) - math.sin(lat_rad) * math.sin(jittered_lat),
+    )
+
+    return math.degrees(jittered_lat), math.degrees(jittered_lon), distance_m
 
 
 class Device:
@@ -58,12 +82,21 @@ class Device:
     # ---------- fake gps ----------
 
     def set_location(self, lat: float, lon: float) -> None:
+        actual_lat, actual_lon, offset_m = jitter_location(lat, lon)
+        log.info(
+            "location jitter: %.1fm; requested=%.7f,%.7f actual=%.7f,%.7f",
+            offset_m,
+            lat,
+            lon,
+            actual_lat,
+            actual_lon,
+        )
         self._adb(
             "shell", "am", "start-foreground-service",
             "-a", FAKEGPS_START,
             "-n", FAKEGPS_SERVICE,
-            "--es", "lat", str(lat),
-            "--es", "long", str(lon),
+            "--es", "lat", str(actual_lat),
+            "--es", "long", str(actual_lon),
         )
 
     def clear_location(self) -> None:
