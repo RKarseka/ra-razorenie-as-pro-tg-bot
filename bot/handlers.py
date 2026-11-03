@@ -110,14 +110,16 @@ async def cmd_places(m: types.Message):
 @owner_only
 async def cmd_addplace(m: types.Message, command: CommandObject):
     try:
-        name, coordinates = command.args.split(maxsplit=1)
-        lat, lon = coordinates.replace(",", " ").split()
-        latitude, longitude = float(lat), float(lon)
+        parts = command.args.replace(",", " ").split()
+        name = " ".join(parts[:-2])
+        latitude, longitude = float(parts[-2]), float(parts[-1])
+        if not name:
+            raise ValueError
         store.add(name, latitude, longitude)
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, IndexError):
         return await m.answer(
-            "Usage: /addplace name lat lon\n"
-            "Yandex Maps format is supported: /addplace dc 53.915323, 27.571478"
+            "Usage: /addplace name lat lon (имя можно с пробелами)\n"
+            "Yandex Maps format is supported: /addplace Dance Cafe 53.915323, 27.571478"
         )
     await m.answer(f"Saved {name} ({latitude}, {longitude})", reply_markup=main_menu())
 
@@ -217,6 +219,7 @@ async def menu_add_place(m: types.Message):
     await m.answer(
         "Пришли объект одной строкой:\n"
         "/addplace имя 53.915323, 27.571478\n\n"
+        "Имя — как в списке Allsports, можно с пробелами.\n"
         "Координаты можно вставить прямо из Яндекс Карт.",
         reply_markup=main_menu(),
     )
