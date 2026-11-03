@@ -187,48 +187,50 @@ class Device:
         steps.append(Step("venue_list", self.screenshot()))
 
         step("select_venue")
-        # Venue desc is "Название\nАдрес". Match the row's normalized
-        # title to the saved name: strict equality first, then a
-        # prefix fallback (row title starts with the saved name) so a
-        # venue whose visible title carries a suffix is still picked —
-        # but nothing unrelated can ever be tapped.
+        # Venue desc is "Название\nАдрес". Strict match only: the row's
+        # normalized title must equal the saved name — no fuzzy fallback,
+        # so a near-miss can never tap the wrong venue. On a miss, scroll
+        # back to the top and retry the whole sweep once (the list may
+        # have loaded late or the first pass raced the refresh).
         norm = self._norm
         want = norm(place_name)
         seen: set[str] = set()
 
         def find_venue():
-            rows = []
             for el in d(clickable=True):
                 desc = el.info.get("contentDescription") or ""
                 title = norm(desc.splitlines()[0] if desc else "")
-                if title:
-                    seen.add(title)
-                    rows.append((el, title))
-            for el, title in rows:
+                if not title:
+                    continue
+                seen.add(title)
                 if title == want:
-                    return el
-            for el, title in rows:
-                if title.startswith(want):
                     return el
             return None
 
         # The venue list loads asynchronously after the location changes —
         # poll for a while before scrolling.
         target = None
-        deadline = time.time() + 20
-        while time.time() < deadline:
-            target = find_venue()
+        for _attempt in range(2):
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                target = find_venue()
+                if target is not None:
+                    break
+                time.sleep(1)
+            if target is None and d(scrollable=True).exists:
+                for _ in range(6):
+                    before = d.dump_hierarchy()
+                    d(scrollable=True).scroll.forward()
+                    time.sleep(1)
+                    target = find_venue()
+                    if target is not None or d.dump_hierarchy() == before:
+                        break
             if target is not None:
                 break
-            time.sleep(1)
-        if target is None and d(scrollable=True).exists:
-            for _ in range(6):
-                before = d.dump_hierarchy()
-                d(scrollable=True).scroll.forward()
+            # Back to the top before the second sweep.
+            if d(scrollable=True).exists:
+                d(scrollable=True).scroll.toBeginning(max_swipes=10)
                 time.sleep(1)
-                target = find_venue()
-                if target is not None or d.dump_hierarchy() == before:
-                    break
         if target is not None:
             target.click()
         steps.append(Step("venue_selected", self.screenshot()))
