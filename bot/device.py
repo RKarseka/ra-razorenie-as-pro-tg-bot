@@ -158,7 +158,8 @@ class Device:
     # ---------- check-in flow ----------
 
     def checkin(self, place_name: str, lat: float, lon: float,
-                on_step=None, service: str | None = None) -> list[Step]:
+                on_step=None, service: str | None = None,
+                jitter: bool = True) -> list[Step]:
         """Drive the Allsports check-in. Returns per-step screenshots.
 
         on_step(name) is called after each stage for progress reporting.
@@ -179,7 +180,7 @@ class Device:
         time.sleep(1)
 
         step("set_location")
-        self.set_location(lat, lon)
+        self.set_location(lat, lon, jitter=jitter)
         time.sleep(3)  # let the fake fix settle
 
         step("open_allsports")
@@ -326,15 +327,15 @@ class Device:
         time.sleep(3)
 
     def venues_near(
-        self, lat: float, lon: float
+        self, lat: float, lon: float, jitter: bool = True
     ) -> tuple[list[tuple[str, str]], bytes]:
-        """Set the exact location (no jitter), open the geo list and collect
+        """Set the location (jitter per setting), open the geo list and collect
         the venues the app offers there. Returns ([(name, detail)], screenshot)
         where detail is the row's second line (address or distance)."""
         import uiautomator2 as u2
 
         self.wake_and_unlock()
-        self.set_location(lat, lon, jitter=False)
+        self.set_location(lat, lon, jitter=jitter)
         time.sleep(3)
         self.open_allsports()
         time.sleep(6)
@@ -372,13 +373,14 @@ class Device:
 
         return names, shot
 
-    def services_of_venue(self, place_name: str, lat: float, lon: float) -> list[str]:
+    def services_of_venue(self, place_name: str, lat: float, lon: float,
+                            jitter: bool = True) -> list[str]:
         """Open the venue in the geo list and collect its «Выбор активности»
         service titles. Navigation is restored with Back afterwards."""
         import uiautomator2 as u2
 
         self.wake_and_unlock()
-        self.set_location(lat, lon, jitter=False)
+        self.set_location(lat, lon, jitter=jitter)
         time.sleep(3)
         self.open_allsports()
         time.sleep(6)
