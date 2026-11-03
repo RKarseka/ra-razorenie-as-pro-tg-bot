@@ -30,6 +30,8 @@ _pending_venues: dict[int, dict] = {}
 _pending_del: dict[int, list[str]] = {}
 # Venue whose services were offered for the visit, per user.
 _pending_svc: dict[int, object] = {}
+# Service multi-select at venue registration, per user.
+_pending_svc_pick: dict[int, dict] = {}
 
 BTN_CHECKIN = "Запросить визит"
 BTN_PLACES = "Объекты"
@@ -223,15 +225,64 @@ async def callback_save_place(c: types.CallbackQuery):
     try:
         await run_in_thread(device.connect)
         services = await run_in_thread(device.services_of_venue, name, lat, lon)
-        store.add(name, lat, lon, address=detail, services=services)
-        if services:
-            listing = "\n".join(f"• {s}" for s in services)
-            await prog.edit_text(f"Услуги «{name}»:\n" + listing)
-        else:
-            await prog.edit_text("Услуги не распарсились.")
     except Exception as e:
         log.exception("services_of_venue failed")
-        await prog.edit_text(f"Не удалось собрать услуги: {e}")
+        return await prog.edit_text(f"Не удалось собрать услуги: {e}")
+    if not services:
+        return await prog.edit_text("Услуги не распарсились.")
+
+    _pending_svc_pick[c.from_user.id] = {
+        "place": (name, lat, lon, detail),
+        "services": services,
+        "chosen": set(),
+    }
+    await _render_service_pick(prog, name, services, set())
+
+
+async def _render_service_pick(prog, venue: str, services: list[str], chosen: set):
+    buttons = [
+        [InlineKeyboardButton(
+            text=("✅ " if i in chosen else "") + s,
+            callback_data=f"svcpick:{i}",
+        )]
+        for i, s in enumerate(services)
+    ]
+    buttons.append([InlineKeyboardButton(text="Готово", callback_data="svcdone")])
+    await prog.edit_text(
+        f"Услуги «{venue}» — отметь нужные и жми «Готово»:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+
+
+@router.callback_query(F.data.startswith("svcpick:"))
+async def callback_svc_pick(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    pend = _pending_svc_pick.get(c.from_user.id)
+    try:
+        i = int(c.data.removeprefix("svcpick:"))
+        pend["services"][i]
+    except (TypeError, KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел.", show_alert=True)
+    pend["chosen"].symmetric_difference_update({i})
+    venue = pend["place"][0]
+    await _render_service_pick(c.message, venue, pend["services"], pend["chosen"])
+    await c.answer()
+
+
+@router.callback_query(F.data == "svcdone")
+async def callback_svc_done(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    pend = _pending_svc_pick.pop(c.from_user.id, None)
+    if not pend:
+        return await c.answer("Список устарел.", show_alert=True)
+    name, lat, lon, detail = pend["place"]
+    chosen = [s for i, s in enumerate(pend["services"]) if i in pend["chosen"]]
+    store.add(name, lat, lon, address=detail, services=chosen)
+    listing = "\n".join(f"• {s}" for s in chosen) or "— не выбраны"
+    await c.message.edit_text(f"Услуги «{name}» сохранены:\n" + listing)
+    await c.answer("Сохранено")
 
 
 @router.message(Command("delplace"))
