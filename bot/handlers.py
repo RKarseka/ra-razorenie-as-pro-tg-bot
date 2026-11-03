@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 router = Router()
 store = PlaceStore(config.db_path)
-device = Device(config.device_serial, config.allsports_pkg)
+device = Device(config.device_serial, config.allsports_pkg, config.device_pin)
 
 # Pending venue picks per user: names discovered by /addplace.
 _pending_venues: dict[int, dict] = {}

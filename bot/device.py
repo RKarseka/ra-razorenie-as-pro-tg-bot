@@ -57,9 +57,11 @@ def jitter_location(lat: float, lon: float) -> tuple[float, float, float]:
 
 
 class Device:
-    def __init__(self, serial: str, allsports_pkg: str = "by.allsports.holder"):
+    def __init__(self, serial: str, allsports_pkg: str = "by.allsports.holder",
+                 pin: str = ""):
         self.serial = serial
         self.allsports_pkg = allsports_pkg
+        self.pin = pin
 
     # ---------- raw adb ----------
 
@@ -115,6 +117,14 @@ class Device:
 
     def wake_and_unlock(self) -> None:
         self._adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
+        time.sleep(1)
+        if self.pin:
+            # Swipe up to reveal the PIN field, type it, confirm.
+            self._adb("shell", "input", "swipe", "540", "1800", "540", "600")
+            time.sleep(1)
+            self._adb("shell", "input", "text", self.pin)
+            self._adb("shell", "input", "keyevent", "66")  # ENTER
+            time.sleep(1)
         self._adb("shell", "wm", "dismiss-keyguard")
 
     def open_allsports(self) -> None:
