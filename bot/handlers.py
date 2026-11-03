@@ -159,6 +159,38 @@ def geocode(query: str, limit: int = 5) -> list[tuple[float, float, str]]:
     return [(float(d["lat"]), float(d["lon"]), d["display_name"]) for d in data]
 
 
+def coords_from_link(text: str) -> tuple[float, float] | None:
+    """Pull (lat, lon) out of a Yandex/Google maps share link, resolving
+    short URLs (yandex.ru/maps/-/… → full URL with ll=)."""
+    import re as _re
+    import urllib.request
+
+    m = _re.search(r"https?://\S+", text)
+    if not m:
+        return None
+    url = m.group(0)
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "as-checkin-bot/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            url = r.geturl()
+    except Exception:
+        pass
+    # Yandex: ll=lon,lat or pt=lon,lat
+    m = _re.search(r"(?:ll|pt)=([-\d.]+)%?[2C]?[cC]?([-\d.]+)", url)
+    if not m:
+        m = _re.search(r"(?:ll|pt)=([-\d.]+),([-\d.]+)", url)
+    if m:
+        return float(m.group(2)), float(m.group(1))
+    # Google: @lat,lon or q=lat,lon
+    m = _re.search(r"@([-\d.]+),([-\d.]+)", url)
+    if not m:
+        m = _re.search(r"[?&](?:q|query|destination)=([-\d.]+),([-\d.]+)", url)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    return None
+
+
 @router.message(Command("addplace"))
 @owner_only
 async def cmd_addplace(m: types.Message, command: CommandObject):
@@ -462,7 +494,8 @@ async def menu_add_place(m: types.Message):
     _awaiting_place_name.add(m.from_user.id)
     await m.answer(
         "Напиши название заведения — найду его на карте и предложу варианты.\n"
-        "(или координаты из Яндекс Карт: 53.915323, 27.571478)",
+        "Можно ссылкой «Поделиться» из Яндекс/Google Карт "
+        "или координатами: 53.915323, 27.571478",
         reply_markup=main_menu(),
     )
 
@@ -587,16 +620,30 @@ async def free_text(m: types.Message):
         return await discover_venues(m, uid, "", lat, lon)
     except (ValueError, IndexError):
         pass
+    if "http" in query:
+        wait = await m.answer("Вытаскиваю координаты из ссылки…")
+        found_ll = await run_in_thread(coords_from_link, query)
+        if found_ll:
+            _awaiting_place_name.discard(uid)
+            lat, lon = found_ll
+            await wait.edit_text(f"Координаты из ссылки: {lat}, {lon}")
+            return await discover_venues(m, uid, "", lat, lon)
+        return await wait.edit_text(
+            "Не вытащил координаты из ссылки. Попробуй название или "
+            "координаты текстом.")
     wait = await m.answer(f"Ищу «{query}» на карте…")
     try:
         found = await run_in_thread(geocode, query)
+        if not found and "," not in query:
+            found = await run_in_thread(geocode, f"{query}, Минск")
     except Exception as e:
         log.exception("geocode failed")
         return await wait.edit_text(f"Геокодер недоступен: {e}")
     if not found:
         return await wait.edit_text(
             f"Не нашёл «{query}» на карте.\n"
-            "Напиши другое название или координаты из Яндекс Карт."
+            "Попробуй другое название, пришли ссылку «Поделиться» "
+            "из Яндекс/Google Карт или координаты текстом."
         )
     _pending_geo[uid] = found
     buttons = [
