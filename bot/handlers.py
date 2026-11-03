@@ -103,6 +103,14 @@ def run_in_thread(fn, *a, **kw):
     return loop.run_in_executor(None, lambda: fn(*a, **kw))
 
 
+async def _drop(msg) -> None:
+    """Delete a transient bot message, ignoring failures."""
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+
 @router.message(Command("start", "help"))
 @owner_only
 async def cmd_help(m: types.Message):
@@ -330,6 +338,7 @@ async def callback_visit(c: types.CallbackQuery):
                               show_alert=True)
     place = store.get(place.name) or place
     await c.answer()
+    await _drop(c.message)
     await offer_services(c.message, c.from_user.id, place)
 
 
@@ -374,6 +383,7 @@ async def callback_del_place(c: types.CallbackQuery):
         return await c.answer("Список устарел — открой «Объекты» заново.", show_alert=True)
     if store.remove(name):
         await c.answer(f"Удалено: {name}")
+        await _drop(c.message)
         await c.message.answer(f"Removed {name}", reply_markup=main_menu())
     else:
         await c.answer("Уже удалён.", show_alert=True)
@@ -396,6 +406,7 @@ async def callback_save_place(c: types.CallbackQuery):
         store.remove(pend["saved_as"])
     pend["saved_as"] = name
     await c.answer(f"Сохранено: {name}")
+    await _drop(c.message)
     await c.message.answer(
         f"Сохранено: {name}\n"
         f"Адрес: {detail}\n"
@@ -536,6 +547,7 @@ async def callback_service(c: types.CallbackQuery):
             "Список устарел — выбери объект заново.", show_alert=True
         )
     await c.answer(service)
+    await _drop(c.message)
     await perform_checkin(c.message, place, service)
 
 
@@ -753,7 +765,7 @@ async def callback_geo_pick(c: types.CallbackQuery):
                               show_alert=True)
     _awaiting_place_name.discard(c.from_user.id)
     await c.answer(disp.split(",")[0])
-    await c.message.edit_text(f"Выбрано: {disp}\nКоординаты: {lat}, {lon}")
+    await _drop(c.message)
     await discover_venues(c.message, c.from_user.id, "", lat, lon)
 
 
