@@ -201,7 +201,15 @@ class Device:
                     return el
             return None
 
-        target = find_venue()
+        # The venue list loads asynchronously after the location changes —
+        # poll for a while before scrolling.
+        target = None
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            target = find_venue()
+            if target is not None:
+                break
+            time.sleep(1)
         if target is None and d(scrollable=True).exists:
             for _ in range(6):
                 before = d.dump_hierarchy()
