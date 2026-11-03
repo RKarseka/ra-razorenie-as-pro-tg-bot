@@ -563,7 +563,19 @@ async def perform_checkin(m: types.Message, place, service: str | None = None):
             device.checkin, place.name, place.lat, place.lon,
             on_step=on_step, service=service, jitter=store.jitter_on(),
         )
-        await progress.edit_text("Request sent — waiting for admin confirmation.")
+        outcome = next(
+            (s.name for s in reversed(steps) if s.name.startswith("outcome_")),
+            "",
+        )
+        if outcome == "outcome_confirmed":
+            await progress.edit_text("✅ Визит подтверждён администратором.")
+        elif outcome == "outcome_expired":
+            await progress.edit_text(
+                "⏱ Время ожидания истекло — администратор не успел "
+                "подтвердить. Попробуй ещё раз.")
+        else:
+            await progress.edit_text(
+                "Request sent — waiting for admin confirmation.")
         for s in steps:
             if s.screenshot:
                 await m.answer_photo(
