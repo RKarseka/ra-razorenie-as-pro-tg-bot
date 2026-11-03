@@ -336,6 +336,8 @@ class Device:
 
         step("result")
         steps.append(Step("result", self.screenshot()))
+        step("close_app")
+        self.close_allsports()
         return steps
 
     # ---------- venue discovery ----------
