@@ -123,6 +123,30 @@ async def cmd_addplace(m: types.Message, command: CommandObject):
         )
     await m.answer(f"Saved {name} ({latitude}, {longitude})", reply_markup=main_menu())
 
+    progress = await m.answer("Смотрю, какие заведения рядом с этой точкой…")
+    try:
+        await run_in_thread(device.connect)
+        names, shot = await run_in_thread(device.venues_near, latitude, longitude)
+        if names:
+            listing = "\n".join(f"• {n}" for n in names)
+            await progress.edit_text(
+                "Заведения рядом с этой точкой:\n" + listing,
+                reply_markup=main_menu(),
+            )
+        else:
+            await progress.edit_text(
+                "Список заведений не распарсился — вот скриншот.",
+                reply_markup=main_menu(),
+            )
+        await m.answer_photo(
+            BufferedInputFile(shot, filename="venues.png"),
+            caption="Вход по локации",
+        )
+    except Exception as e:
+        log.exception("venues_near failed")
+        await progress.edit_text(f"Не удалось открыть список: {e}",
+                                 reply_markup=main_menu())
+
 
 @router.message(Command("delplace"))
 @owner_only
