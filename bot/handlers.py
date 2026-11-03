@@ -563,7 +563,10 @@ async def callback_service(c: types.CallbackQuery):
 
 
 async def perform_checkin(m: types.Message, place, service: str | None = None):
+    uid = m.chat.id
+    await _untrack(m.bot, uid, "checkin")
     progress = await m.answer(f"Connecting to device at {config.device_serial}…")
+    _track(uid, "checkin", progress.message_id)
     loop = asyncio.get_running_loop()
     last_step = ["connect"]
 
@@ -606,12 +609,6 @@ async def perform_checkin(m: types.Message, place, service: str | None = None):
         else:
             await progress.edit_text(
                 f"Request sent — waiting for admin confirmation.\n{geo}")
-        for s in steps:
-            if s.screenshot:
-                await m.answer_photo(
-                    BufferedInputFile(s.screenshot, filename=f"{s.name}.png"),
-                    caption=s.name,
-                )
     except Exception as e:
         log.exception("checkin failed")
         sp = device.last_spoof
@@ -622,9 +619,11 @@ async def perform_checkin(m: types.Message, place, service: str | None = None):
         await progress.edit_text(f"Failed at {last_step[0]}: {e}{geo}")
         try:
             shot = await run_in_thread(device.screenshot)
-            await m.answer_photo(BufferedInputFile(shot, filename="screen.png"))
+            ph = await m.answer_photo(
+                BufferedInputFile(shot, filename="screen.png"))
+            _track(uid, "checkin", progress.message_id, ph.message_id)
         except Exception:
-            pass
+            _track(uid, "checkin", progress.message_id)
 
 
 @router.message(F.text == BTN_CHECKIN)
@@ -652,6 +651,7 @@ async def callback_checkin(c: types.CallbackQuery):
     if not place:
         return await c.answer("Объект не найден.", show_alert=True)
     await c.answer()
+    await _drop(c.message)
     await offer_services(c.message, c.from_user.id, place)
 
 

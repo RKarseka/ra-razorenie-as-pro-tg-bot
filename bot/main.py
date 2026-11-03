@@ -34,7 +34,7 @@ async def greet_users(bot: Bot):
     for uid in config.allowed_users:
         try:
             for kind in ("update", "menu", "status", "shot", "dump",
-                         "settings"):
+                         "settings", "checkin"):
                 await _untrack(bot, uid, kind)
             r = await bot.send_message(
                 uid, "Бот запущен и готов к работе.",
