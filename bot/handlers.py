@@ -134,8 +134,10 @@ async def _untrack(bot, uid: int, kind: str) -> None:
 @owner_only
 async def cmd_help(m: types.Message):
     await _drop(m)
-    await m.answer("Выбери действие кнопкой ниже.",
-                   reply_markup=main_menu())
+    await _untrack(m.bot, m.from_user.id, "menu")
+    r = await m.answer("Выбери действие кнопкой ниже.",
+                       reply_markup=main_menu())
+    _track(m.from_user.id, "menu", r.message_id)
 
 
 @router.message(Command("places"))
