@@ -27,8 +27,7 @@ device = Device(config.device_serial, config.allsports_pkg)
 # Pending venue picks per user: names discovered by /addplace.
 _pending_venues: dict[int, dict] = {}
 # Place names shown by /places, so delete callbacks fit 64-byte callback_data.
-_pending_del: dict[int, list[str]] = {}
-# Last «Объекты» listing per user (Place rows, for service editing).
+# Last «Объекты» listing per user (Place rows, for nested actions).
 _pending_places: dict[int, list] = {}
 # Venue whose services were offered for the visit, per user.
 _pending_svc: dict[int, object] = {}
@@ -129,15 +128,13 @@ async def cmd_places(m: types.Message):
         f"• {p.name}: {p.lat}, {p.lon}" + (f" — {p.address}" if p.address else "")
         for p in places
     ]
-    _pending_del[m.from_user.id] = [p.name for p in places]
     _pending_places[m.from_user.id] = places
     buttons = [
-        [InlineKeyboardButton(text=f"✏️ услуги {p.name}", callback_data=f"svcedit:{i}"),
-         InlineKeyboardButton(text=f"🗑 {p.name}", callback_data=f"del:{i}")]
+        [InlineKeyboardButton(text=p.name, callback_data=f"plc:{i}")]
         for i, p in enumerate(places)
     ]
     await m.answer(
-        "\n".join(lines) + "\n\n✏️ — изменить услуги · 🗑 — удалить объект",
+        "\n".join(lines) + "\n\nНажми на объект — откроются действия.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
 
@@ -267,6 +264,71 @@ async def discover_venues(m: types.Message, uid: int, name: str,
         await progress.edit_text(f"Не удалось открыть список: {e}")
 
 
+def _place_card(place) -> tuple[str, InlineKeyboardMarkup, int]:
+    places = store.list()
+    idx = next((i for i, p in enumerate(places) if p.name == place.name), -1)
+    services = "\n".join(f"  • {x}" for x in place.services) or "  —"
+    text = (f"{place.name}\nАдрес: {place.address or '—'}\n"
+            f"Координаты: {place.lat}, {place.lon}\nУслуги:\n{services}")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Услуги", callback_data=f"svcedit:{idx}"),
+         InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del:{idx}")],
+        [InlineKeyboardButton(text="🏃 Запросить визит", callback_data=f"vis:{idx}")],
+        [InlineKeyboardButton(text="← Назад к объектам", callback_data="plcback")],
+    ])
+    return text, kb, idx
+
+
+@router.callback_query(F.data.startswith("plc:"))
+async def callback_place_card(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    try:
+        place = _pending_places[c.from_user.id][int(c.data.removeprefix("plc:"))]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    place = store.get(place.name) or place  # fresh copy, services may differ
+    text, kb, _ = _place_card(place)
+    await c.message.edit_text(text, reply_markup=kb)
+    await c.answer()
+
+
+@router.callback_query(F.data == "plcback")
+async def callback_places_back(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    places = store.list()
+    _pending_places[c.from_user.id] = places
+    lines = [
+        f"• {p.name}: {p.lat}, {p.lon}" + (f" — {p.address}" if p.address else "")
+        for p in places
+    ]
+    buttons = [
+        [InlineKeyboardButton(text=p.name, callback_data=f"plc:{i}")]
+        for i, p in enumerate(places)
+    ]
+    await c.message.edit_text(
+        "\n".join(lines) + "\n\nНажми на объект — откроются действия.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("vis:"))
+async def callback_visit(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    try:
+        place = _pending_places[c.from_user.id][int(c.data.removeprefix("vis:"))]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    place = store.get(place.name) or place
+    await c.answer()
+    await offer_services(c.message, c.from_user.id, place)
+
+
 @router.callback_query(F.data.startswith("svcedit:"))
 async def callback_edit_services(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
@@ -301,7 +363,8 @@ async def callback_del_place(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
         return await c.answer("Access denied.", show_alert=True)
     try:
-        name = _pending_del[c.from_user.id][int(c.data.removeprefix("del:"))]
+        place = _pending_places[c.from_user.id][int(c.data.removeprefix("del:"))]
+        name = place.name
     except (KeyError, IndexError, ValueError):
         return await c.answer("Список устарел — открой «Объекты» заново.", show_alert=True)
     if store.remove(name):
