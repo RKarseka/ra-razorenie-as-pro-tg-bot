@@ -40,6 +40,7 @@ BTN_SHOT = "Скриншот"
 BTN_STATUS = "Статус"
 BTN_STOP = "Остановить геопозицию"
 BTN_DUMP = "Дамп UI"
+BTN_UPDATE = "Обновить бота"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -55,7 +56,7 @@ def main_menu() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=BTN_STATUS),
             ],
             [KeyboardButton(text=BTN_STOP)],
-            [KeyboardButton(text=BTN_DUMP)],
+            [KeyboardButton(text=BTN_DUMP), KeyboardButton(text=BTN_UPDATE)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -457,6 +458,26 @@ async def menu_add_place(m: types.Message):
         "Координаты можно вставить прямо из Яндекс Карт.",
         reply_markup=main_menu(),
     )
+
+
+@router.message(Command("update"))
+@router.message(F.text == BTN_UPDATE)
+@owner_only
+async def cmd_update(m: types.Message):
+    """Self-update: git pull in the repo dir + restart the systemd unit."""
+    import os
+
+    repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    proc = await asyncio.create_subprocess_exec(
+        "git", "-C", repo_dir, "pull", "--ff-only",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await proc.communicate()
+    text = out.decode(errors="replace").strip()[:3500]
+    await m.answer(f"```\n{text}\n```", parse_mode="Markdown")
+    await m.answer("Перезапускаю бота… (если он молчит пару минут — проверь journalctl)")
+    await asyncio.create_subprocess_exec("systemctl", "restart", "asbot")
 
 
 @router.message(Command("stop"))
