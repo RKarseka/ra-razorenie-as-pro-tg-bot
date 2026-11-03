@@ -13,16 +13,7 @@ from .handlers import router, main_menu, _track, _untrack
 logging.basicConfig(level=logging.INFO)
 
 BOT_COMMANDS = [
-    BotCommand(command="checkin", description="Запросить визит"),
-    BotCommand(command="places", description="Объекты"),
-    BotCommand(command="addplace", description="Добавить объект"),
-    BotCommand(command="delplace", description="Удалить объект"),
-    BotCommand(command="shot", description="Скриншот телефона"),
-    BotCommand(command="status", description="Статус устройства"),
-    BotCommand(command="stop", description="Остановить геопозицию"),
-    BotCommand(command="dump", description="Дамп UI"),
-    BotCommand(command="update", description="Обновить код и перезапустить бота"),
-    BotCommand(command="settings", description="Настройки"),
+    BotCommand(command="start", description="Меню"),
 ]
 
 
