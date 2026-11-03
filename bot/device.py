@@ -276,25 +276,44 @@ class Device:
             if svc is None:
                 raise DeviceError(f"service '{service}' not found")
             svc.click()
-            time.sleep(2)
-
-        step("tap_checkin")
-        time.sleep(2)
-        # Supplier bottom sheet -> Check in button
-        checkin_btn_re = "(?is).*(check.?in|отметиться|отметить|чек.?ин|записаться|забронировать|посетить).*"
-        if not tap(checkin_btn_re, timeout=8):
-            raise DeviceError("'Check in' button not found")
-        time.sleep(4)
-
-        step("confirm")
-        # Possible extra dialog ("Choose a check-in method" / confirm).
-        if d(descriptionMatches="(?is).*(choose a check-in method|способ).*").exists \
-                or d(textMatches="(?is).*(choose a check-in method|способ).*").exists:
-            tap("(?is).*(location|geo|near me|гео|локац).*", timeout=5)
             time.sleep(3)
-        confirm_re = "(?is).*(confirm|yes|ok|подтвердить|да\b|ок\b).*"
-        tap(confirm_re, timeout=3)
-        time.sleep(3)
+
+        step("wait_for_confirmation")
+        # The service tap often submits the request directly — the app
+        # then shows «Запрос на создание визита отправлен… ожидайте
+        # подтверждения администратора» and no check-in button at all.
+        # Poll for that waiting state first; only tap check-in if it
+        # never appears.
+        waiting_re = ("(?is).*(запрос.*отправлен|ожидайте\\s*подтверждени|"
+                      "истечени.*времени\\s*ожидания|подтверждени.*администратор).*")
+        sent = False
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if (d(descriptionMatches=waiting_re).exists
+                    or d(textMatches=waiting_re).exists):
+                sent = True
+                break
+            time.sleep(1)
+        steps.append(Step("checkin_state", self.screenshot()))
+
+        if not sent:
+            step("tap_checkin")
+            time.sleep(2)
+            # Supplier bottom sheet -> Check in button
+            checkin_btn_re = "(?is).*(check.?in|отметиться|отметить|чек.?ин|записаться|забронировать|посетить).*"
+            if not tap(checkin_btn_re, timeout=8):
+                raise DeviceError("'Check in' button not found")
+            time.sleep(4)
+
+            step("confirm")
+            # Possible extra dialog ("Choose a check-in method" / confirm).
+            if d(descriptionMatches="(?is).*(choose a check-in method|способ).*").exists \
+                    or d(textMatches="(?is).*(choose a check-in method|способ).*").exists:
+                tap("(?is).*(location|geo|near me|гео|локац).*", timeout=5)
+                time.sleep(3)
+            confirm_re = "(?is).*(confirm|yes|ok|подтвердить|да\b|ок\b).*"
+            tap(confirm_re, timeout=3)
+            time.sleep(3)
 
         step("result")
         steps.append(Step("result", self.screenshot()))
