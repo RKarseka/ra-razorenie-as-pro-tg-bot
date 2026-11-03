@@ -68,14 +68,15 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
-def place_menu() -> InlineKeyboardMarkup | None:
+def place_menu(uid: int) -> InlineKeyboardMarkup | None:
     places = store.list()
     if not places:
         return None
+    _pending_places[uid] = places
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=p.name, callback_data=f"checkin:{p.name}")]
-            for p in places
+            [InlineKeyboardButton(text=p.name, callback_data=f"checkin:{i}")]
+            for i, p in enumerate(places)
         ]
     )
 
@@ -558,7 +559,7 @@ async def perform_checkin(m: types.Message, place, service: str | None = None):
 @router.message(F.text == BTN_CHECKIN)
 @owner_only
 async def menu_checkin(m: types.Message):
-    keyboard = place_menu()
+    keyboard = place_menu(m.from_user.id)
     if not keyboard:
         return await m.answer(
             "Объектов пока нет. Нажми «Добавить объект».",
@@ -571,7 +572,12 @@ async def menu_checkin(m: types.Message):
 async def callback_checkin(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
         return await c.answer("Access denied.", show_alert=True)
-    place = store.get(c.data.removeprefix("checkin:"))
+    try:
+        place = _pending_places[c.from_user.id][int(c.data.removeprefix("checkin:"))]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — нажми «Запросить визит» ещё раз.",
+                              show_alert=True)
+    place = store.get(place.name)
     if not place:
         return await c.answer("Объект не найден.", show_alert=True)
     await c.answer()
