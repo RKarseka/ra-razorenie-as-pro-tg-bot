@@ -114,19 +114,8 @@ async def _drop(msg) -> None:
 @router.message(Command("start", "help"))
 @owner_only
 async def cmd_help(m: types.Message):
-    await m.answer(
-        "Выбери действие кнопкой ниже.\n\n"
-        "Commands:\n"
-        "/places — saved venues\n"
-        "/addplace name lat lon — save a venue\n"
-        "/delplace name — remove a venue\n"
-        "/checkin name — spoof location & request check-in\n"
-        "/stop — stop visit (clear spoof, close Allsports)\n"
-        "/shot — screenshot the duty phone\n"
-        "/dump — UI hierarchy for selector calibration\n"
-        "/status — device connectivity",
-        reply_markup=main_menu(),
-    )
+    await m.answer("Выбери действие кнопкой ниже.",
+                   reply_markup=main_menu())
 
 
 @router.message(Command("places"))
