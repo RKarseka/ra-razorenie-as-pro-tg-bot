@@ -263,9 +263,12 @@ class Device:
             raise DeviceError("'Enter by location' option not found")
         time.sleep(3)
 
-    def venues_near(self, lat: float, lon: float) -> tuple[list[str], bytes]:
+    def venues_near(
+        self, lat: float, lon: float
+    ) -> tuple[list[tuple[str, str]], bytes]:
         """Set the exact location (no jitter), open the geo list and collect
-        venue names the app offers there. Returns (names, screenshot)."""
+        the venues the app offers there. Returns ([(name, detail)], screenshot)
+        where detail is the row's second line (address or distance)."""
         import uiautomator2 as u2
 
         self.wake_and_unlock()
@@ -278,7 +281,7 @@ class Device:
         self._open_geo_list(d)
         time.sleep(2)
 
-        names: list[str] = []
+        names: list[tuple[str, str]] = []
         seen = set()
 
         def collect() -> None:
@@ -292,7 +295,7 @@ class Device:
                     title = desc[0].strip()
                     if title and title not in seen:
                         seen.add(title)
-                        names.append(title)
+                        names.append((title, desc[1].strip()))
 
         collect()
         shot = self.screenshot()

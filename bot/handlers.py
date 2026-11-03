@@ -106,7 +106,11 @@ async def cmd_places(m: types.Message):
     places = store.list()
     if not places:
         return await m.answer("No places yet. /addplace name lat lon", reply_markup=main_menu())
-    await m.answer("\n".join(f"• {p.name}: {p.lat}, {p.lon}" for p in places), reply_markup=main_menu())
+    lines = [
+        f"• {p.name}: {p.lat}, {p.lon}" + (f" — {p.address}" if p.address else "")
+        for p in places
+    ]
+    await m.answer("\n".join(lines), reply_markup=main_menu())
 
 
 @router.message(Command("addplace"))
@@ -136,10 +140,10 @@ async def cmd_addplace(m: types.Message, command: CommandObject):
                 "lon": longitude,
                 "saved_as": name or None,
             }
-            listing = "\n".join(f"• {n}" for n in names)
+            listing = "\n".join(f"• {t} — {d}" for t, d in names)
             buttons = [
-                [InlineKeyboardButton(text=n, callback_data=f"save:{i}")]
-                for i, n in enumerate(names)
+                [InlineKeyboardButton(text=t, callback_data=f"save:{i}")]
+                for i, (t, _d) in enumerate(names)
             ]
             await progress.edit_text(
                 "Заведения рядом с этой точкой:\n" + listing
@@ -163,19 +167,22 @@ async def callback_save_place(c: types.CallbackQuery):
         return await c.answer("Access denied.", show_alert=True)
     pend = _pending_venues.get(c.from_user.id)
     try:
-        name = pend["names"][int(c.data.removeprefix("save:"))]
+        name, detail = pend["names"][int(c.data.removeprefix("save:"))]
         lat, lon = pend["lat"], pend["lon"]
     except (TypeError, KeyError, IndexError, ValueError):
         return await c.answer(
             "Список устарел — отправь /addplace заново.", show_alert=True
         )
-    store.add(name, lat, lon)
+    store.add(name, lat, lon, address=detail)
     if pend.get("saved_as") and pend["saved_as"] != name:
         store.remove(pend["saved_as"])
     pend["saved_as"] = name
     await c.answer(f"Сохранено: {name}")
     await c.message.answer(
-        f"Saved {name} ({lat}, {lon})", reply_markup=main_menu()
+        f"Сохранено: {name}\n"
+        f"Адрес: {detail}\n"
+        f"Координаты: {lat}, {lon}",
+        reply_markup=main_menu(),
     )
 
 
