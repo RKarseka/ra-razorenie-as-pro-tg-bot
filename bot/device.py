@@ -82,16 +82,20 @@ class Device:
 
     # ---------- fake gps ----------
 
-    def set_location(self, lat: float, lon: float) -> None:
-        actual_lat, actual_lon, offset_m = jitter_location(lat, lon)
-        log.info(
-            "location jitter: %.1fm; requested=%.7f,%.7f actual=%.7f,%.7f",
-            offset_m,
-            lat,
-            lon,
-            actual_lat,
-            actual_lon,
-        )
+    def set_location(self, lat: float, lon: float, jitter: bool = True) -> None:
+        if jitter:
+            actual_lat, actual_lon, offset_m = jitter_location(lat, lon)
+            log.info(
+                "location jitter: %.1fm; requested=%.7f,%.7f actual=%.7f,%.7f",
+                offset_m,
+                lat,
+                lon,
+                actual_lat,
+                actual_lon,
+            )
+        else:
+            actual_lat, actual_lon = lat, lon
+            log.info("location set exact: %.7f,%.7f", lat, lon)
         self._adb(
             "shell", "am", "start-foreground-service",
             "-a", FAKEGPS_START,
@@ -178,18 +182,7 @@ class Device:
             )
 
         step("new_checkin_tab")
-        # Bottom-nav "Новый визит" tab. "новый визит" can't collide with
-        # body copy like "Осталось 4 визита".
-        new_visit_re = "(?is).*(new (visit|check.?in)|новый визит).*"
-        tap(new_visit_re, timeout=5)
-        time.sleep(3)
-        steps.append(Step("new_visit_screen", self.screenshot()))
-
-        step("enter_by_location")
-        # "Новый визит" menu -> "Вход по локации" opens the geo venue list.
-        loc_re = "(?is).*(вход по локац|by location|enter by location).*"
-        if not tap(loc_re, timeout=8):
-            raise DeviceError("'Enter by location' option not found")
+        self._open_geo_list(d)
         time.sleep(3)
         steps.append(Step("venue_list", self.screenshot()))
 
@@ -250,6 +243,69 @@ class Device:
         step("result")
         steps.append(Step("result", self.screenshot()))
         return steps
+
+    # ---------- venue discovery ----------
+
+    @staticmethod
+    def _tap(d, pattern: str, timeout: float) -> bool:
+        return (
+            d(descriptionMatches=pattern).click_exists(timeout=timeout)
+            or d(textMatches=pattern).click_exists(timeout=3)
+        )
+
+    def _open_geo_list(self, d) -> None:
+        """Bottom-nav 'Новый визит' -> 'Вход по локации' venue list."""
+        # 'новый визит' can't collide with body copy like 'Осталось 4 визита'.
+        self._tap(d, "(?is).*(new (visit|check.?in)|новый визит).*", timeout=5)
+        time.sleep(3)
+        loc_re = "(?is).*(вход по локац|by location|enter by location).*"
+        if not self._tap(d, loc_re, timeout=8):
+            raise DeviceError("'Enter by location' option not found")
+        time.sleep(3)
+
+    def venues_near(self, lat: float, lon: float) -> tuple[list[str], bytes]:
+        """Set the exact location (no jitter), open the geo list and collect
+        venue names the app offers there. Returns (names, screenshot)."""
+        import uiautomator2 as u2
+
+        self.wake_and_unlock()
+        self.set_location(lat, lon, jitter=False)
+        time.sleep(3)
+        self.open_allsports()
+        time.sleep(6)
+
+        d = u2.connect(self.serial)
+        self._open_geo_list(d)
+        time.sleep(2)
+
+        names: list[str] = []
+        seen = set()
+
+        def collect() -> None:
+            for el in d(clickable=True):
+                desc = (el.info.get("contentDescription") or "").splitlines()
+                if len(desc) < 2:
+                    continue
+                second = desc[1].strip().lower()
+                # Venue rows: title + address ("г. Минск, ...") or distance.
+                if second.startswith("г.") or "м от вас" in second or "км от вас" in second:
+                    title = desc[0].strip()
+                    if title and title not in seen:
+                        seen.add(title)
+                        names.append(title)
+
+        collect()
+        shot = self.screenshot()
+        if d(scrollable=True).exists:
+            for _ in range(6):
+                before = d.dump_hierarchy()
+                d(scrollable=True).scroll.forward()
+                time.sleep(1)
+                if d.dump_hierarchy() == before:
+                    break
+                collect()
+
+        return names, shot
 
     def dump_ui(self) -> str:
         """Current window hierarchy for selector calibration."""
