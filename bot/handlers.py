@@ -61,11 +61,16 @@ async def cmd_places(m: types.Message):
 @owner_only
 async def cmd_addplace(m: types.Message, command: CommandObject):
     try:
-        name, lat, lon = command.args.split()
-        store.add(name, float(lat), float(lon))
+        name, coordinates = command.args.split(maxsplit=1)
+        lat, lon = coordinates.replace(",", " ").split()
+        latitude, longitude = float(lat), float(lon)
+        store.add(name, latitude, longitude)
     except (ValueError, AttributeError):
-        return await m.answer("Usage: /addplace name lat lon")
-    await m.answer(f"Saved {name} ({lat}, {lon})")
+        return await m.answer(
+            "Usage: /addplace name lat lon\n"
+            "Yandex Maps format is supported: /addplace dc 53.915323, 27.571478"
+        )
+    await m.answer(f"Saved {name} ({latitude}, {longitude})")
 
 
 @router.message(Command("delplace"))
