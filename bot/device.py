@@ -168,11 +168,19 @@ class Device:
         steps.append(Step("allsports_home", self.screenshot()))
 
         step("new_checkin_tab")
-        # Bottom-nav tab opening the venue list. EN and RU labels seen in the
-        # wild; calibrate via /dump if none matches.
-        new_checkin_re = "(?i).*(check.?in|чек.?ин|посещение|визит).*"
-        if not d(descriptionMatches=new_checkin_re).click_exists(timeout=5):
-            d(textMatches=new_checkin_re).click_exists(timeout=5)
+        # Bottom-nav "New visit" tab (label is exact to avoid matching body
+        # text such as "Осталось 4 визита").
+        new_visit_re = "(?i)^(new (visit|check.?in)|новый визит)$"
+        if not d(descriptionMatches=new_visit_re).click_exists(timeout=5):
+            d(textMatches=new_visit_re).click_exists(timeout=5)
+        time.sleep(3)
+        steps.append(Step("new_visit_screen", self.screenshot()))
+
+        step("enter_by_location")
+        # "Новый визит" menu -> "Вход по локации" opens the geo venue list.
+        loc_re = "(?i).*(вход по локац|by location|enter by location).*"
+        if not d(textMatches=loc_re).click_exists(timeout=8):
+            raise DeviceError("'Enter by location' option not found")
         time.sleep(3)
         steps.append(Step("venue_list", self.screenshot()))
 
