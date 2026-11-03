@@ -419,6 +419,7 @@ async def callback_save_place(c: types.CallbackQuery):
         "place": (name, lat, lon, detail),
         "services": services,
         "chosen": set(),
+        "delete_on_cancel": True,  # registration in-flight → abort removes draft
     }
     await _render_service_pick(prog, name, services, set())
 
@@ -431,7 +432,8 @@ async def _render_service_pick(prog, venue: str, services: list[str], chosen: se
         )]
         for i, s in enumerate(services)
     ]
-    buttons.append([InlineKeyboardButton(text="Готово", callback_data="svcdone")])
+    buttons.append([InlineKeyboardButton(text="Готово", callback_data="svcdone"),
+                    InlineKeyboardButton(text="Отмена", callback_data="svccancel")])
     await prog.edit_text(
         f"Услуги «{venue}» — отметь нужные и жми «Готово»:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
@@ -467,6 +469,23 @@ async def callback_svc_done(c: types.CallbackQuery):
     listing = "\n".join(f"• {s}" for s in chosen) or "— не выбраны"
     await c.message.edit_text(f"Услуги «{name}» сохранены:\n" + listing)
     await c.answer("Сохранено")
+
+
+@router.callback_query(F.data == "svccancel")
+async def callback_svc_cancel(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer("Access denied.", show_alert=True)
+    pend = _pending_svc_pick.pop(c.from_user.id, None)
+    if not pend:
+        return await c.answer("Список устарел.", show_alert=True)
+    name = pend["place"][0]
+    if pend.get("delete_on_cancel"):
+        store.remove(name)
+        await c.message.edit_text(f"Отменено — объект «{name}» не сохранён.")
+    else:
+        await c.message.edit_text(
+            f"Отменено — услуги «{name}» остались без изменений.")
+    await c.answer("Отменено")
 
 
 @router.message(Command("delplace"))
