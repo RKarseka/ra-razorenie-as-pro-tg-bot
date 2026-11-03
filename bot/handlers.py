@@ -823,23 +823,22 @@ async def callback_req_force(c: types.CallbackQuery):
 
 
 async def _remind_admin(bot, req_id: str) -> None:
-    """Re-ping admins every 10 min while the request stays expired
-    and before the 22:30 cutoff."""
-    while True:
-        await asyncio.sleep(600)
-        req = store.get_request(req_id)
-        if not req or req["state"] != "expired" or _secs_until_close() <= 0:
-            return
-        for aid in store.admins_for(req["venue"]):
-            try:
-                r = await bot.send_message(
-                    aid,
-                    f"⏰ Напоминание: визит в «{req['venue']}» не принят — "
-                    "жми «Перезапустить запрос», когда будешь готов.",
-                    reply_markup=admin_menu())
-                _track(aid, "admreq", r.message_id)
-            except Exception:
-                pass
+    """One re-ping 10 min after an expired/failed request — only once;
+    a new reminder is scheduled only by the next run's outcome."""
+    await asyncio.sleep(600)
+    req = store.get_request(req_id)
+    if not req or req["state"] not in ("expired", "failed"):
+        return
+    for aid in store.admins_for(req["venue"]):
+        try:
+            r = await bot.send_message(
+                aid,
+                f"⏰ Напоминание: визит в «{req['venue']}» не принят — "
+                "жми «Перезапустить запрос», когда будешь готов.",
+                reply_markup=admin_menu())
+            _track(aid, "admreq", r.message_id)
+        except Exception:
+            pass
 
 
 async def _run_checkin(m: types.Message, place, service: str | None = None,
@@ -915,7 +914,8 @@ async def _run_checkin(m: types.Message, place, service: str | None = None,
                    f"(смещение {sp[4]:.0f} м)")
         await progress.edit_text(f"Failed at {last_step[0]}: {e}{geo}")
         if req_id:
-            store.set_request_state(req_id, "closed")
+            store.set_request_state(req_id, "failed")
+            asyncio.create_task(_remind_admin(m.bot, req_id))
         await _broadcast(m.bot, place.name, uid,
                          f"{place.name}: ошибка — {e}", exclude={uid})
         try:
