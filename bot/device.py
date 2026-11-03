@@ -187,16 +187,28 @@ class Device:
         steps.append(Step("venue_list", self.screenshot()))
 
         step("select_venue")
-        # Venue desc is "Название\nАдрес". Strict match only: the row's
-        # normalized title must equal the saved name — no fuzzy fallback,
-        # so a near-miss can never tap the wrong venue.
+        # Venue desc is "Название\nАдрес". Match the row's normalized
+        # title to the saved name: strict equality first, then a
+        # prefix fallback (row title starts with the saved name) so a
+        # venue whose visible title carries a suffix is still picked —
+        # but nothing unrelated can ever be tapped.
         norm = self._norm
+        want = norm(place_name)
+        seen: set[str] = set()
 
         def find_venue():
+            rows = []
             for el in d(clickable=True):
                 desc = el.info.get("contentDescription") or ""
                 title = norm(desc.splitlines()[0] if desc else "")
-                if title == norm(place_name):
+                if title:
+                    seen.add(title)
+                    rows.append((el, title))
+            for el, title in rows:
+                if title == want:
+                    return el
+            for el, title in rows:
+                if title.startswith(want):
                     return el
             return None
 
@@ -221,7 +233,9 @@ class Device:
             target.click()
         steps.append(Step("venue_selected", self.screenshot()))
         if target is None:
-            raise DeviceError(f"venue '{place_name}' not found in geo list")
+            listed = "\n".join(f"  - {t}" for t in sorted(seen)) or "  (пусто)"
+            raise DeviceError(
+                f"venue '{place_name}' not found in geo list. Saw:\n{listed}")
 
         if service is not None:
             step("select_service")
