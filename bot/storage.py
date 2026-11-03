@@ -25,6 +25,10 @@ class PlaceStore:
             "  address TEXT NOT NULL DEFAULT '',"
             "  services TEXT NOT NULL DEFAULT '[]')"
         )
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS settings("
+            "  key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
         for col in ("address TEXT NOT NULL DEFAULT ''",
                     "services TEXT NOT NULL DEFAULT '[]'"):
             try:
@@ -67,3 +71,19 @@ class PlaceStore:
                 "SELECT name, lat, lon, address, services FROM places ORDER BY name"
             )
         ]
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        row = self.db.execute(
+            "SELECT value FROM settings WHERE key=?", (key,)
+        ).fetchone()
+        return row[0] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.db.execute(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES(?,?)",
+            (key, value),
+        )
+        self.db.commit()
+
+    def jitter_on(self) -> bool:
+        return self.get_setting("jitter", "1") != "0"

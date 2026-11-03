@@ -46,6 +46,7 @@ BTN_STATUS = "Статус"
 BTN_STOP = "Остановить визит"
 BTN_DUMP = "Дамп UI"
 BTN_UPDATE = "Обновить бота"
+BTN_JITTER = "Смещение"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -61,7 +62,8 @@ def main_menu() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=BTN_STATUS),
             ],
             [KeyboardButton(text=BTN_STOP)],
-            [KeyboardButton(text=BTN_DUMP), KeyboardButton(text=BTN_UPDATE)],
+            [KeyboardButton(text=BTN_DUMP), KeyboardButton(text=BTN_UPDATE),
+             KeyboardButton(text=BTN_JITTER)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -236,7 +238,8 @@ async def discover_venues(m: types.Message, uid: int, name: str,
     progress = await m.answer("Смотрю, какие заведения рядом с этой точкой…")
     try:
         await run_in_thread(device.connect)
-        names, shot = await run_in_thread(device.venues_near, latitude, longitude)
+        names, shot = await run_in_thread(device.venues_near, latitude, longitude,
+                                 store.jitter_on())
         if names:
             _pending_venues[uid] = {
                 "names": names,
@@ -344,7 +347,8 @@ async def callback_edit_services(c: types.CallbackQuery):
     try:
         await run_in_thread(device.connect)
         services = await run_in_thread(
-            device.services_of_venue, place.name, place.lat, place.lon)
+            device.services_of_venue, place.name, place.lat, place.lon,
+            store.jitter_on())
     except Exception as e:
         log.exception("services_of_venue failed")
         return await prog.edit_text(f"Не удалось собрать услуги: {e}")
@@ -403,7 +407,8 @@ async def callback_save_place(c: types.CallbackQuery):
     prog = await c.message.answer("Собираю услуги заведения…")
     try:
         await run_in_thread(device.connect)
-        services = await run_in_thread(device.services_of_venue, name, lat, lon)
+        services = await run_in_thread(device.services_of_venue, name, lat, lon,
+                                       store.jitter_on())
     except Exception as e:
         log.exception("services_of_venue failed")
         return await prog.edit_text(f"Не удалось собрать услуги: {e}")
@@ -537,7 +542,7 @@ async def perform_checkin(m: types.Message, place, service: str | None = None):
         await progress.edit_text(f"Spoofing to {place.name} ({place.lat}, {place.lon})…")
         steps = await run_in_thread(
             device.checkin, place.name, place.lat, place.lon,
-            on_step=on_step, service=service,
+            on_step=on_step, service=service, jitter=store.jitter_on(),
         )
         await progress.edit_text("Request sent — waiting for admin confirmation.")
         for s in steps:
@@ -687,6 +692,17 @@ async def menu_status(m: types.Message):
 @owner_only
 async def menu_stop(m: types.Message):
     await cmd_stop(m)
+
+
+@router.message(F.text == BTN_JITTER)
+@owner_only
+async def menu_jitter(m: types.Message):
+    on = store.jitter_on()
+    store.set_setting("jitter", "0" if on else "1")
+    await m.answer(
+        f"Смещение координат: {'выкл (точная точка)' if on else 'вкл (10-30 м)'}",
+        reply_markup=main_menu(),
+    )
 
 
 @router.message(F.text == BTN_DUMP)
