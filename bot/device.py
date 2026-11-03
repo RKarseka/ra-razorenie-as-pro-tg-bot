@@ -168,9 +168,10 @@ class Device:
         steps.append(Step("allsports_home", self.screenshot()))
 
         step("new_checkin_tab")
-        # Bottom-nav "New visit" tab (label is exact to avoid matching body
-        # text such as "Осталось 4 визита").
-        new_visit_re = "(?i)^(new (visit|check.?in)|новый визит)$"
+        # Bottom-nav "Новый визит" tab. Loose match: Flutter semantics may
+        # carry extra text; "новый визит" can't collide with body copy like
+        # "Осталось 4 визита".
+        new_visit_re = "(?i).*(new (visit|check.?in)|новый визит).*"
         if not d(descriptionMatches=new_visit_re).click_exists(timeout=5):
             d(textMatches=new_visit_re).click_exists(timeout=5)
         time.sleep(3)

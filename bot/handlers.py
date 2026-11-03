@@ -30,6 +30,7 @@ BTN_ADD_PLACE = "Добавить объект"
 BTN_SHOT = "Скриншот"
 BTN_STATUS = "Статус"
 BTN_STOP = "Остановить геопозицию"
+BTN_DUMP = "Дамп UI"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -45,6 +46,7 @@ def main_menu() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=BTN_STATUS),
             ],
             [KeyboardButton(text=BTN_STOP)],
+            [KeyboardButton(text=BTN_DUMP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -142,11 +144,20 @@ async def cmd_checkin(m: types.Message, command: CommandObject):
 
 async def perform_checkin(m: types.Message, place):
     progress = await m.answer(f"Connecting to device at {config.device_serial}…")
+    loop = asyncio.get_running_loop()
+    last_step = ["connect"]
+
+    def on_step(name: str) -> None:
+        last_step[0] = name
+        asyncio.run_coroutine_threadsafe(
+            progress.edit_text(f"{place.name}: {name}…"), loop
+        )
+
     try:
         await run_in_thread(device.connect)
         await progress.edit_text(f"Spoofing to {place.name} ({place.lat}, {place.lon})…")
         steps = await run_in_thread(
-            device.checkin, place.name, place.lat, place.lon
+            device.checkin, place.name, place.lat, place.lon, on_step=on_step
         )
         await progress.edit_text("Request sent — waiting for admin confirmation.")
         for s in steps:
@@ -157,7 +168,7 @@ async def perform_checkin(m: types.Message, place):
                 )
     except Exception as e:
         log.exception("checkin failed")
-        await progress.edit_text(f"Failed: {e}")
+        await progress.edit_text(f"Failed at {last_step[0]}: {e}")
         try:
             shot = await run_in_thread(device.screenshot)
             await m.answer_photo(BufferedInputFile(shot, filename="screen.png"))
@@ -268,3 +279,9 @@ async def menu_status(m: types.Message):
 @owner_only
 async def menu_stop(m: types.Message):
     await cmd_stop(m)
+
+
+@router.message(F.text == BTN_DUMP)
+@owner_only
+async def menu_dump(m: types.Message):
+    await cmd_dump(m)
