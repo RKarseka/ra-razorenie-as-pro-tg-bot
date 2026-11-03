@@ -8,7 +8,7 @@ from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from .config import config
-from .handlers import router, main_menu
+from .handlers import router, main_menu, _track, _untrack
 
 logging.basicConfig(level=logging.INFO)
 
@@ -38,13 +38,17 @@ async def on_startup(bot: Bot):
 
 
 async def greet_users(bot: Bot):
-    """Restore the reply keyboard after every (re)start."""
+    """Restore the reply keyboard after every (re)start and clean up
+    the previous boot's transient messages."""
     for uid in config.allowed_users:
         try:
-            await bot.send_message(
+            await _untrack(bot, uid, "update")
+            await _untrack(bot, uid, "hello")
+            r = await bot.send_message(
                 uid, "Бот запущен и готов к работе.",
                 reply_markup=main_menu(),
             )
+            _track(uid, "hello", r.message_id)
         except Exception:
             logging.exception("greeting to %s failed", uid)
 
