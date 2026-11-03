@@ -4,12 +4,30 @@ import logging
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
+from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from .config import config
 from .handlers import router
 
 logging.basicConfig(level=logging.INFO)
+
+BOT_COMMANDS = [
+    BotCommand(command="checkin", description="Запросить визит"),
+    BotCommand(command="places", description="Объекты"),
+    BotCommand(command="addplace", description="Добавить объект"),
+    BotCommand(command="delplace", description="Удалить объект"),
+    BotCommand(command="shot", description="Скриншот телефона"),
+    BotCommand(command="status", description="Статус устройства"),
+    BotCommand(command="stop", description="Остановить геопозицию"),
+    BotCommand(command="dump", description="Дамп UI"),
+    BotCommand(command="start", description="Меню"),
+]
+
+
+async def set_commands(bot: Bot):
+    await bot.set_my_commands(BOT_COMMANDS)
+    logging.info("bot command menu set")
 
 
 async def on_startup(bot: Bot):
@@ -22,6 +40,7 @@ def main():
     bot = Bot(token=config.bot_token)
     dp = Dispatcher()
     dp.include_router(router)
+    dp.startup.register(set_commands)
 
     if config.mode != "webhook":
         import asyncio
