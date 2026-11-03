@@ -194,18 +194,39 @@ class Device:
         steps.append(Step("venue_list", self.screenshot()))
 
         step("select_venue")
-        # The venue list is geo-filtered; venue desc is
-        # "Название\nNN м от вас" — place_name must be a substring of it.
-        name_re = "(?is).*" + re.escape(place_name) + ".*"
-        found = tap(name_re, timeout=10)
-        if not found and d(scrollable=True).exists:
-            d(scrollable=True).scroll.toBeginning()
-            if d(scrollable=True).scroll.to(descriptionMatches=name_re):
-                found = d(descriptionMatches=name_re).click_exists(timeout=3)
-            elif d(scrollable=True).scroll.to(textMatches=name_re):
-                found = d(textMatches=name_re).click_exists(timeout=3)
+        # Venue desc is "Название\nАдрес". Match precisely: a row wins when
+        # every word of place_name appears in its desc (any position), and
+        # an exact normalized title match outranks a partial one. This keeps
+        # "flexico куйбышева" distinct from "flexico машерова".
+        def norm(s: str) -> str:
+            return re.sub(r"[^\w\s]", " ", s).lower().replace("ё", "е")
+
+        def find_venue():
+            wanted = norm(place_name).split()
+            best = None
+            for el in d(clickable=True):
+                desc = el.info.get("contentDescription") or ""
+                title = norm(desc.splitlines()[0] if desc else "")
+                body = norm(desc)
+                if title == norm(place_name):
+                    return el  # exact title match, unambiguous
+                if all(w in body for w in wanted) and best is None:
+                    best = el
+            return best
+
+        target = find_venue()
+        if target is None and d(scrollable=True).exists:
+            for _ in range(6):
+                before = d.dump_hierarchy()
+                d(scrollable=True).scroll.forward()
+                time.sleep(1)
+                target = find_venue()
+                if target is not None or d.dump_hierarchy() == before:
+                    break
+        if target is not None:
+            target.click()
         steps.append(Step("venue_selected", self.screenshot()))
-        if not found:
+        if target is None:
             raise DeviceError(f"venue '{place_name}' not found in geo list")
 
         step("tap_checkin")
