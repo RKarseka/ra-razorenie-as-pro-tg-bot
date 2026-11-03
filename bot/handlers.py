@@ -93,7 +93,7 @@ def owner_only(handler):
     @wraps(handler)
     async def wrapper(m: types.Message, *args, **kwargs):
         if m.from_user.id not in config.allowed_users:
-            return await m.answer("Access denied.")
+            return  # silently ignore — strangers see a dead bot
         return await handler(m, *args, **kwargs)
     return wrapper
 
@@ -305,7 +305,7 @@ def _place_card(place) -> tuple[str, InlineKeyboardMarkup, int]:
 @router.callback_query(F.data.startswith("plc:"))
 async def callback_place_card(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     try:
         place = _pending_places[c.from_user.id][int(c.data.removeprefix("plc:"))]
     except (KeyError, IndexError, ValueError):
@@ -320,7 +320,7 @@ async def callback_place_card(c: types.CallbackQuery):
 @router.callback_query(F.data == "plcback")
 async def callback_places_back(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     places = store.list()
     _pending_places[c.from_user.id] = places
     lines = [
@@ -341,7 +341,7 @@ async def callback_places_back(c: types.CallbackQuery):
 @router.callback_query(F.data.startswith("vis:"))
 async def callback_visit(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     try:
         place = _pending_places[c.from_user.id][int(c.data.removeprefix("vis:"))]
     except (KeyError, IndexError, ValueError):
@@ -356,7 +356,7 @@ async def callback_visit(c: types.CallbackQuery):
 @router.callback_query(F.data.startswith("svcedit:"))
 async def callback_edit_services(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     try:
         place = _pending_places[c.from_user.id][int(c.data.removeprefix("svcedit:"))]
     except (KeyError, IndexError, ValueError):
@@ -386,7 +386,7 @@ async def callback_edit_services(c: types.CallbackQuery):
 @router.callback_query(F.data.startswith("del:"))
 async def callback_del_place(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     try:
         place = _pending_places[c.from_user.id][int(c.data.removeprefix("del:"))]
         name = place.name
@@ -403,7 +403,7 @@ async def callback_del_place(c: types.CallbackQuery):
 @router.callback_query(F.data.startswith("save:"))
 async def callback_save_place(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     pend = _pending_venues.get(c.from_user.id)
     try:
         name, detail = pend["names"][int(c.data.removeprefix("save:"))]
@@ -465,7 +465,7 @@ async def _render_service_pick(prog, venue: str, services: list[str], chosen: se
 @router.callback_query(F.data.startswith("svcpick:"))
 async def callback_svc_pick(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     pend = _pending_svc_pick.get(c.from_user.id)
     try:
         i = int(c.data.removeprefix("svcpick:"))
@@ -481,7 +481,7 @@ async def callback_svc_pick(c: types.CallbackQuery):
 @router.callback_query(F.data == "svcdone")
 async def callback_svc_done(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     pend = _pending_svc_pick.pop(c.from_user.id, None)
     if not pend:
         return await c.answer("Список устарел.", show_alert=True)
@@ -496,7 +496,7 @@ async def callback_svc_done(c: types.CallbackQuery):
 @router.callback_query(F.data == "svccancel")
 async def callback_svc_cancel(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     pend = _pending_svc_pick.pop(c.from_user.id, None)
     if not pend:
         return await c.answer("Список устарел.", show_alert=True)
@@ -549,7 +549,7 @@ async def offer_services(m: types.Message, uid: int, place) -> None:
 @router.callback_query(F.data.startswith("svc:"))
 async def callback_service(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     place = _pending_svc.get(c.from_user.id)
     try:
         service = place.services[int(c.data.removeprefix("svc:"))]
@@ -637,7 +637,7 @@ async def menu_checkin(m: types.Message):
 @router.callback_query(F.data.startswith("checkin:"))
 async def callback_checkin(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     try:
         place = _pending_places[c.from_user.id][int(c.data.removeprefix("checkin:"))]
     except (KeyError, IndexError, ValueError):
@@ -793,7 +793,7 @@ async def menu_settings(m: types.Message):
 @router.callback_query(F.data == "setjitter")
 async def callback_set_jitter(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     on = store.jitter_on()
     store.set_setting("jitter", "0" if on else "1")
     await c.message.edit_text("Настройки:", reply_markup=_settings_kb())
@@ -803,7 +803,7 @@ async def callback_set_jitter(c: types.CallbackQuery):
 @router.callback_query(F.data == "setclose")
 async def callback_set_close(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     await _drop(c.message)
     await c.answer()
 
@@ -817,7 +817,7 @@ async def menu_dump(m: types.Message):
 @router.callback_query(F.data.startswith("geo:"))
 async def callback_geo_pick(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
-        return await c.answer("Access denied.", show_alert=True)
+        return await c.answer()
     try:
         lat, lon, disp = _pending_geo[c.from_user.id][int(c.data.removeprefix("geo:"))]
     except (KeyError, IndexError, ValueError):
