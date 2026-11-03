@@ -254,10 +254,10 @@ async def discover_venues(m: types.Message, uid: int, name: str,
             )
         else:
             await progress.edit_text("Список заведений не распарсился — вот скриншот.")
-        await m.answer_photo(
-            BufferedInputFile(shot, filename="venues.png"),
-            caption="Вход по локации",
-        )
+            await m.answer_photo(
+                BufferedInputFile(shot, filename="venues.png"),
+                caption="Вход по локации",
+            )
     except Exception as e:
         log.exception("venues_near failed")
         await progress.edit_text(f"Не удалось открыть список: {e}")
