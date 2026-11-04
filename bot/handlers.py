@@ -825,13 +825,12 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     kb_o = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="▶️ Запустить без подтверждения",
                              callback_data=f"reqgo:{req_id}")]])
+    # The keyboard rides on the last plain message — the force button
+    # needs its own inline-keyboard message, so send it separately.
     await m.answer(
         f"⏳ Жду готовности администратора до 22:30…{svc}",
-        reply_markup=kb_o)
-    # The waiting message carries the inline force button, so it cannot
-    # refresh the reply keyboard — send a self-deleting anchor so the
-    # ⏳ request chip appears on it.
-    await _send_menu(m, uid)
+        reply_markup=main_menu())
+    await m.answer("▶️ Можно запустить сразу:", reply_markup=kb_o)
 
     wait_s = _secs_until_close()
     try:
@@ -854,7 +853,6 @@ async def _request_admin_ready(m, place, service, admins) -> None:
                              f"▶️ Запуск без подтверждения администратора "
                              f"— «{place.name}»{svc}.", exclude={uid})
         await _run_checkin(m, place, service, req_id)
-        await _send_menu(m, uid)
         return
 
     store.set_request_state(req_id, "closed")
@@ -1010,6 +1008,8 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
         await progress.edit_text(final)
         if req_id:
             store.set_request_state(req_id, state)
+        # Persistent result doubles as the keyboard anchor.
+        await m.answer(final, reply_markup=main_menu())
         await _broadcast(m.bot, place.name, uid, f"{place.name}: {final}",
                          exclude={uid})
         if state == "expired" and req_id:
@@ -1030,7 +1030,8 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
         try:
             shot = await run_in_thread(device.screenshot)
             ph = await m.answer_photo(
-                BufferedInputFile(shot, filename="screen.png"))
+                BufferedInputFile(shot, filename="screen.png"),
+                reply_markup=main_menu())
             _track(uid, "checkin", progress.message_id, ph.message_id)
         except Exception:
             _track(uid, "checkin", progress.message_id)
@@ -1123,9 +1124,8 @@ async def cmd_stop(m: types.Message):
     try:
         await run_in_thread(device.connect)
         await run_in_thread(device.stop_visit)
-        r = await m.answer("Визит остановлен: геопозиция снята, Allsports закрыт")
-        asyncio.create_task(_autodelete(r))
-        await _send_menu(m, m.from_user.id)
+        await m.answer("Визит остановлен: геопозиция снята, Allsports закрыт",
+                       reply_markup=main_menu())
     except DeviceError as e:
         await m.answer(f"Failed: {e}")
 
