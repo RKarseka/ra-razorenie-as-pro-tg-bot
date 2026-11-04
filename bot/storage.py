@@ -206,6 +206,15 @@ class PlaceStore:
                 (time.time(), venue))
         self.db.commit()
 
+    def current_request(self):
+        """The single globally-active request, if any."""
+        r = self.db.execute(
+            "SELECT id, venue, service, owner, state FROM requests "
+            "WHERE state IN ('waiting','ready','sent','expired','failed') "
+            "ORDER BY updated DESC LIMIT 1").fetchone()
+        return ({"id": r[0], "venue": r[1], "service": r[2],
+                 "owner": r[3], "state": r[4]} if r else None)
+
     def open_requests_for_admin(self, tg_id: int):
         rows = self.db.execute(
             "SELECT r.id, r.venue, r.service, r.owner, r.state "
