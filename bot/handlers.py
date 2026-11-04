@@ -107,14 +107,16 @@ async def _display_name(bot, tg_id: int) -> str:
 
 
 async def _broadcast(bot, venue: str, owner_uid: int, text: str,
-                     exclude: set[int] | None = None) -> None:
+                     exclude: set[int] | None = None) -> list[types.Message]:
     """Log an event to the request owner AND every venue admin at once."""
     targets = ({owner_uid} | set(store.admins_for(venue))) - (exclude or set())
+    sent = []
     for uid in targets:
         try:
-            await bot.send_message(uid, text)
+            sent.append(await bot.send_message(uid, text))
         except Exception:
             pass
+    return sent
 
 
 def place_menu(uid: int) -> InlineKeyboardMarkup | None:
@@ -859,9 +861,11 @@ async def _request_admin_ready(m, place, service, admins) -> None:
 
     store.set_request_state(req_id, "closed")
     if result == "cancelled":
-        await _broadcast(m.bot, place.name, uid,
-                         f"⛔ Запрос в «{place.name}»{svc} отменён.",
-                         exclude={uid})
+        sent = await _broadcast(m.bot, place.name, uid,
+                                f"⛔ Запрос в «{place.name}»{svc} отменён.",
+                                exclude={uid})
+        for msg in sent:
+            asyncio.create_task(_autodelete(msg, 120))
     elif result == "declined":
         await m.answer(f"Администраторы «{place.name}» не могут принять "
                        "запрос сейчас.", reply_markup=main_menu())
