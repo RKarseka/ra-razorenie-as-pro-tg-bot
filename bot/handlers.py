@@ -725,7 +725,10 @@ async def _request_admin_ready(m, place, service, admins) -> None:
                             "declined": set(), "owner": uid}
 
     kb = _req_kb(req_id)
-    text = f"🔔 Запрос на визит в «{place.name}»{svc} — готов подтвердить?"
+    owner_name = getattr(m.from_user, "full_name", "") or "владельца"
+    what = service or place.name
+    text = (f"Привет. Давай отметим «{what}» от {owner_name}.\n"
+            f"Заведение: «{place.name}» — готов подтвердить?")
     for aid in admins:
         try:
             r = await m.bot.send_message(aid, text, reply_markup=kb)
