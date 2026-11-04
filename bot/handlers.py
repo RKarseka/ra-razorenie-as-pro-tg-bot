@@ -822,6 +822,12 @@ async def callback_req_force(c: types.CallbackQuery):
     await _drop(c.message)
 
 
+async def _notify_request_sent(bot, venue: str, owner: int) -> None:
+    await _broadcast(
+        bot, venue, owner,
+        f"📲 Запрос в «{venue}» отправлен — подтверди его в приложении.")
+
+
 async def _remind_admin(bot, req_id: str) -> None:
     """One re-ping 10 min after an expired/failed request — only once;
     a new reminder is scheduled only by the next run's outcome."""
@@ -861,6 +867,10 @@ async def _run_checkin(m: types.Message, place, service: str | None = None,
         asyncio.run_coroutine_threadsafe(
             _set_progress(f"{place.name}: {name}…"), loop
         )
+        if name == "await_outcome":
+            asyncio.run_coroutine_threadsafe(
+                _notify_request_sent(m.bot, place.name, uid), loop
+            )
 
     try:
         await run_in_thread(device.connect)
@@ -894,15 +904,6 @@ async def _run_checkin(m: types.Message, place, service: str | None = None,
             store.set_request_state(req_id, state)
         await _broadcast(m.bot, place.name, uid, f"{place.name}: {final}",
                          exclude={uid})
-        if state == "sent":
-            for aid in store.admins_for(place.name):
-                try:
-                    r = await m.bot.send_message(
-                        aid, f"📲 Запрос в «{place.name}» отправлен — "
-                             "подтверди его в приложении.")
-                    _track(aid, "admreq", r.message_id)
-                except Exception:
-                    pass
         if state == "expired" and req_id:
             asyncio.create_task(_remind_admin(m.bot, req_id))
     except Exception as e:
