@@ -184,7 +184,7 @@ class Device:
 
         step("set_location")
         self.set_location(lat, lon, jitter=jitter)
-        time.sleep(3)  # let the fake fix settle
+        time.sleep(8)  # let the fake fix settle before the app reads it
 
         step("open_allsports")
         self.open_allsports()
