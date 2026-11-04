@@ -1023,7 +1023,7 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
         log.info("checkin: connecting to device")
         await asyncio.wait_for(run_in_thread(device.connect), timeout=45)
         log.info("checkin: connected, starting checkin flow")
-        await progress.edit_text(f"Spoofing to {place.name} ({place.lat}, {place.lon})…")
+        await _set_progress(f"Spoofing to {place.name} ({place.lat}, {place.lon})…")
         steps = await run_in_thread(
             device.checkin, place.name, place.lat, place.lon,
             on_step=on_step, service=service, jitter=store.jitter_on(),
@@ -1049,7 +1049,7 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
         else:
             final = f"Request sent — waiting for admin confirmation.\n{geo}"
             state = "sent"
-        await progress.edit_text(final)
+        await _set_progress(final)
         if req_id:
             store.set_request_state(req_id, state)
         # Persistent result doubles as the keyboard anchor.
@@ -1066,7 +1066,9 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
         if sp:
             geo = (f"\n📍 {sp[0]},{sp[1]} → {sp[2]:.6f},{sp[3]:.6f} "
                    f"(смещение {sp[4]:.0f} м)")
-        await progress.edit_text(f"Failed at {last_step[0]}: {e}{geo}")
+        await _set_progress(f"Failed at {last_step[0]}: {e}{geo}")
+        await m.answer(f"Failed at {last_step[0]}: {e}{geo}",
+                       reply_markup=main_menu())
         if req_id:
             store.set_request_state(req_id, "failed")
             asyncio.create_task(_remind_admin(m.bot, req_id))
