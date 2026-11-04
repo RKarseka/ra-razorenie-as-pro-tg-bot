@@ -14,6 +14,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 
 from .config import config
@@ -79,12 +80,8 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
-def admin_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_ADM_RESTART)]],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
+def admin_menu() -> ReplyKeyboardRemove:
+    return ReplyKeyboardRemove()
 
 
 _TZ3 = timezone(timedelta(hours=3))
@@ -889,7 +886,7 @@ async def _remind_admin(bot, req_id: str) -> None:
             r = await bot.send_message(
                 aid,
                 f"⏰ Напоминание: визит в «{req['venue']}» не принят — "
-                "жми «Перезапустить запрос», когда будешь готов.",
+                "подтверди его в приложении или сообщи владельцу.",
                 reply_markup=admin_menu())
             _track(aid, "admreq", r.message_id)
         except Exception:
