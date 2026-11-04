@@ -191,6 +191,21 @@ class PlaceStore:
             (state, time.time(), req_id))
         self.db.commit()
 
+    def close_open_requests(self, venue: str | None = None) -> None:
+        """Close every open request — optionally only one venue's."""
+        import time
+        if venue is None:
+            self.db.execute(
+                "UPDATE requests SET state='closed', updated=? "
+                "WHERE state IN ('waiting','sent','expired','failed')",
+                (time.time(),))
+        else:
+            self.db.execute(
+                "UPDATE requests SET state='closed', updated=? "
+                "WHERE venue=? AND state IN ('waiting','sent','expired','failed')",
+                (time.time(), venue))
+        self.db.commit()
+
     def open_requests_for_admin(self, tg_id: int):
         rows = self.db.execute(
             "SELECT r.id, r.venue, r.service, r.owner, r.state "

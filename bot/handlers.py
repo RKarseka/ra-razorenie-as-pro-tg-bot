@@ -763,6 +763,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     uid = m.chat.id
     req_id = secrets.token_hex(4)
     svc = f" · {service}" if service else ""
+    store.close_open_requests(place.name)
     store.put_request(req_id, place.name, service or "", uid, "waiting")
     _pending_req[req_id] = {"event": asyncio.Event(), "result": None,
                             "declined": set(), "owner": uid}

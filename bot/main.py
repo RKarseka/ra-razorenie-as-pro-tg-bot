@@ -29,6 +29,9 @@ async def on_startup(bot: Bot):
 
 
 async def greet_users(bot: Bot):
+    # In-memory pending state is lost on restart — close requests that
+    # were still 'waiting' so they can't be restarted by stale buttons.
+    store.close_open_requests()
     """Restore the reply keyboard after every (re)start and clean up
     the previous boot's transient messages."""
     for uid in config.allowed_users:
