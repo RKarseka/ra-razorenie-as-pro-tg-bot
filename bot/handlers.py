@@ -1095,6 +1095,14 @@ async def cmd_update(m: types.Message, uid: int | None = None):
 
     uid = uid or m.from_user.id
     await _drop(m)
+    # Sweep old transient messages before updating — the boot-time
+    # cleanup would only run after the restart.
+    for kind in ("update", "menu", "status", "shot", "dump",
+                 "settings", "checkin"):
+        try:
+            await _untrack(m.bot, uid, kind)
+        except Exception:
+            pass
 
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     proc = await asyncio.create_subprocess_exec(
@@ -1106,7 +1114,8 @@ async def cmd_update(m: types.Message, uid: int | None = None):
     text = out.decode(errors="replace").strip()[:3500]
     m1 = await m.answer(f"```\n{text}\n```", parse_mode="Markdown")
     m2 = await m.answer(
-        "Перезапускаю бота… (если он молчит пару минут — проверь journalctl)")
+        "Перезапускаю бота… (если он молчит пару минут — проверь journalctl)",
+        reply_markup=main_menu())
     _track(uid, "update", m1.message_id, m2.message_id)
     await asyncio.create_subprocess_exec("systemctl", "restart", "asbot")
 
