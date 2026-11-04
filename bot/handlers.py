@@ -119,7 +119,7 @@ async def _broadcast(bot, venue: str, owner_uid: int, text: str,
         try:
             sent.append(await bot.send_message(uid, text))
         except Exception:
-            pass
+            log.exception("broadcast to %s failed", uid)
     return sent
 
 
@@ -851,7 +851,10 @@ async def _request_admin_ready(m, place, service, admins) -> None:
         result = "timeout"
     pending = _pending_req.pop(req_id, None)
     for aid in admins:
-        await _untrack(m.bot, aid, "admreq")
+        try:
+            await _untrack(m.bot, aid, "admreq")
+        except Exception:
+            pass
     await _drop(r)  # the waiting message is stale in every outcome
 
     if result in ("ready", "force"):
@@ -866,7 +869,10 @@ async def _request_admin_ready(m, place, service, admins) -> None:
         await _run_checkin(m, place, service, req_id)
         return
 
-    store.set_request_state(req_id, "closed")
+    try:
+        store.set_request_state(req_id, "closed")
+    except Exception:
+        log.exception("set_request_state failed")
     if result == "cancelled":
         sent = await _broadcast(m.bot, place.name, uid,
                                 f"⛔ Запрос в «{place.name}»{svc} отменён.",
