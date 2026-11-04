@@ -34,6 +34,11 @@ async def greet_users(bot: Bot):
     store.close_open_requests()
     """Restore the reply keyboard after every (re)start and clean up
     the previous boot's transient messages."""
+    for aid in store.all_admin_ids():
+        try:
+            await _untrack(bot, aid, "admreq")
+        except Exception:
+            pass
     for uid in config.allowed_users:
         try:
             for kind in ("update", "menu", "status", "shot", "dump",
