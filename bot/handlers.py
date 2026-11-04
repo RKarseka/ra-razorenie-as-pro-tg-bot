@@ -1094,6 +1094,8 @@ async def cmd_stop(m: types.Message):
         if pend["owner"] == m.from_user.id and pend["result"] is None:
             pend["result"] = "cancelled"
             pend["event"].set()
+    store.close_open_requests()  # the chip must leave the keyboard at once;
+    # the waiting coroutine still broadcasts the ⛔ cancellation to admins
     try:
         await run_in_thread(device.connect)
         await run_in_thread(device.stop_visit)
