@@ -197,12 +197,12 @@ class PlaceStore:
         if venue is None:
             self.db.execute(
                 "UPDATE requests SET state='closed', updated=? "
-                "WHERE state IN ('waiting','sent','expired','failed')",
+                "WHERE state IN ('waiting','ready','sent','expired','failed')",
                 (time.time(),))
         else:
             self.db.execute(
                 "UPDATE requests SET state='closed', updated=? "
-                "WHERE venue=? AND state IN ('waiting','sent','expired','failed')",
+                "WHERE venue=? AND state IN ('waiting','ready','sent','expired','failed')",
                 (time.time(), venue))
         self.db.commit()
 
@@ -219,7 +219,7 @@ class PlaceStore:
         rows = self.db.execute(
             "SELECT r.id, r.venue, r.service, r.owner, r.state "
             "FROM requests r JOIN admins a ON a.venue=r.venue "
-            "WHERE a.tg_id=? AND r.state IN ('waiting','sent','expired','failed') "
+            "WHERE a.tg_id=? AND r.state IN ('waiting','ready','sent','expired','failed') "
             "ORDER BY r.updated DESC", (tg_id,)).fetchall()
         return [{"id": r[0], "venue": r[1], "service": r[2],
                  "owner": r[3], "state": r[4]} for r in rows]

@@ -158,6 +158,11 @@ async def _drop(msg) -> None:
         pass
 
 
+async def _autodelete(m: types.Message, secs: int = 20) -> None:
+    await asyncio.sleep(secs)
+    await _drop(m)
+
+
 def _track(uid: int, kind: str, *ids: int) -> None:
     """Persist transient message ids so they can be deleted later,
     including after a restart."""
@@ -1099,8 +1104,9 @@ async def cmd_stop(m: types.Message):
     try:
         await run_in_thread(device.connect)
         await run_in_thread(device.stop_visit)
-        await m.answer("Визит остановлен: геопозиция снята, Allsports закрыт",
-                       reply_markup=main_menu())
+        r = await m.answer("Визит остановлен: геопозиция снята, Allsports закрыт",
+                           reply_markup=main_menu())
+        asyncio.create_task(_autodelete(r))
     except DeviceError as e:
         await m.answer(f"Failed: {e}")
 
