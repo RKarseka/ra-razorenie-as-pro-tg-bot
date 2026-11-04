@@ -8,7 +8,7 @@ from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from .config import config
-from .handlers import router, main_menu, _track, _untrack
+from .handlers import router, main_menu, _track, _untrack, store
 
 logging.basicConfig(level=logging.INFO)
 
