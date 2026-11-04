@@ -56,6 +56,7 @@ BTN_STOP = "Остановить визит"
 BTN_DUMP = "Дамп UI"
 BTN_UPDATE = "Обновить бота"
 BTN_SETTINGS = "Настройки"
+BTN_FORCE = "▶️ Запустить сразу"
 BTN_ADM_RESTART = "Перезапустить запрос"
 
 
@@ -64,6 +65,9 @@ def main_menu() -> ReplyKeyboardMarkup:
     req = store.current_request()
     if req:
         row1.append(KeyboardButton(text=f"⏳ {req['venue']}"))
+        pend = _pending_req.get(req["id"])
+        if req["state"] == "waiting" and pend and pend["result"] is None:
+            row1.append(KeyboardButton(text=BTN_FORCE))
     row1.append(KeyboardButton(text=BTN_CHECKIN))
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -822,17 +826,12 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     await _broadcast(m.bot, place.name, uid,
                      f"📨 Запрос отправлен администраторам «{place.name}»{svc}.",
                      exclude={uid})
-    # The reply keyboard rides on this plain message — the waiting text
-    # below carries the inline force button and can't hold it.
+    # One message carries the keyboard; the force-launch action sits
+    # in the keyboard itself while the request is waiting.
     await m.answer(
-        f"📨 Запрос отправлен администраторам «{place.name}»{svc}.",
+        f"📨 Запрос отправлен администраторам «{place.name}»{svc}.\n"
+        "⏳ Жду готовности до 22:30.",
         reply_markup=main_menu())
-    kb_o = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="▶️ Запустить без подтверждения",
-                             callback_data=f"reqgo:{req_id}")]])
-    await m.answer(
-        f"⏳ Жду готовности администратора до 22:30…{svc}\n"
-        "Или запусти сразу:", reply_markup=kb_o)
 
     wait_s = _secs_until_close()
     try:
@@ -907,6 +906,17 @@ async def callback_req_decline(c: types.CallbackQuery):
         pend["event"].set()
 
 
+@router.message(F.text == BTN_FORCE)
+@owner_only
+async def menu_force(m: types.Message):
+    await _drop(m)
+    for pend in _pending_req.values():
+        if pend["owner"] == m.from_user.id and pend["result"] is None:
+            pend["result"] = "force"
+            pend["event"].set()
+            return
+
+
 @router.callback_query(F.data.startswith("reqgo:"))
 async def callback_req_force(c: types.CallbackQuery):
     if c.from_user.id not in config.allowed_users:
@@ -959,7 +969,8 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
                           req_id: str | None = None):
     uid = m.chat.id
     await _untrack(m.bot, uid, "checkin")
-    progress = await m.answer(f"Connecting to device at {config.device_serial}…")
+    progress = await m.answer(f"Connecting to device at {config.device_serial}…",
+                              reply_markup=main_menu())
     _track(uid, "checkin", progress.message_id)
     loop = asyncio.get_running_loop()
     last_step = ["connect"]
