@@ -1020,12 +1020,15 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
             )
 
     try:
-        await run_in_thread(device.connect)
+        log.info("checkin: connecting to device")
+        await asyncio.wait_for(run_in_thread(device.connect), timeout=45)
+        log.info("checkin: connected, starting checkin flow")
         await progress.edit_text(f"Spoofing to {place.name} ({place.lat}, {place.lon})…")
         steps = await run_in_thread(
             device.checkin, place.name, place.lat, place.lon,
             on_step=on_step, service=service, jitter=store.jitter_on(),
         )
+        log.info("checkin: flow finished")
         sp = device.last_spoof
         if sp:
             geo = (f"📍 {sp[0]},{sp[1]} → {sp[2]:.6f},{sp[3]:.6f} "
