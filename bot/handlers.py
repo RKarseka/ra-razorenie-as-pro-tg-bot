@@ -42,6 +42,7 @@ _awaiting_name_for: dict[int, int] = {}
 _pending_geo: dict[int, list] = {}
 # Live visit requests awaiting the admin decision, keyed by request id.
 _pending_req: dict[str, dict] = {}
+_checkin_lock = asyncio.Lock()
 # Admin restart picks when several requests are open.
 _pending_restart: dict[int, list] = {}
 
@@ -884,6 +885,14 @@ async def _remind_admin(bot, req_id: str) -> None:
 
 async def _run_checkin(m: types.Message, place, service: str | None = None,
                        req_id: str | None = None):
+    if _checkin_lock.locked():
+        note = await m.answer("⏳ Уже идёт заезд на телефоне — этот запрос встанет в очередь.")
+    async with _checkin_lock:
+        await _checkin_locked(m, place, service, req_id)
+
+
+async def _checkin_locked(m: types.Message, place, service: str | None = None,
+                          req_id: str | None = None):
     uid = m.chat.id
     await _untrack(m.bot, uid, "checkin")
     progress = await m.answer(f"Connecting to device at {config.device_serial}…")
