@@ -1,5 +1,6 @@
 """Webhook entry point (Telegram 'serverless' style: no polling)."""
 
+import asyncio
 import logging
 
 from aiohttp import web
@@ -8,7 +9,8 @@ from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from .config import config
-from .handlers import router, main_menu, _track, _untrack, store
+from .handlers import (
+    router, _track, _untrack, _refresh_menu, _autodelete, store)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -45,10 +47,9 @@ async def greet_users(bot: Bot):
                          "settings", "checkin"):
                 await _untrack(bot, uid, kind)
             r = await bot.send_message(
-                uid, "Бот запущен и готов к работе.",
-                reply_markup=main_menu(),
-            )
-            _track(uid, "menu", r.message_id)
+                uid, "Бот запущен и готов к работе.")
+            asyncio.create_task(_autodelete(r))
+            await _refresh_menu(bot, uid)
         except Exception:
             logging.exception("greeting to %s failed", uid)
 
