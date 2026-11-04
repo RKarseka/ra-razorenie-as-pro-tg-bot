@@ -97,6 +97,18 @@ def _secs_until_close() -> float:
     return max(0.0, (deadline - now).total_seconds())
 
 
+async def _display_name(bot, tg_id: int) -> str:
+    """Owner-defined alias first, then the Telegram profile name."""
+    alias = store.name_of(tg_id)
+    if alias:
+        return alias
+    try:
+        ch = await bot.get_chat(tg_id)
+        return ("@" + ch.username) if ch.username else (ch.full_name or str(tg_id))
+    except Exception:
+        return str(tg_id)
+
+
 async def _broadcast(bot, venue: str, owner_uid: int, text: str,
                      exclude: set[int] | None = None) -> None:
     """Log an event to the request owner AND every venue admin at once."""
