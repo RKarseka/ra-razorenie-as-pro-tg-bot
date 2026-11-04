@@ -37,6 +37,7 @@ _pending_svc: dict[int, object] = {}
 _pending_svc_pick: dict[int, dict] = {}
 # Users asked to type a venue name (from «Добавить объект»).
 _awaiting_place_name: set[int] = set()
+_awaiting_name_for: dict[int, int] = {}
 # Geocoding candidates offered to each user.
 _pending_geo: dict[int, list] = {}
 # Live visit requests awaiting the admin decision, keyed by request id.
@@ -191,7 +192,7 @@ async def _accept_invite(m: types.Message, token: str) -> None:
         return await m.answer("Ссылка недействительна или уже использована.")
     venue, invited_by = row
     store.add_admin(venue, m.from_user.id)
-    who = m.from_user.full_name
+    who = await _display_name(m.bot, m.from_user.id)
     await m.answer(f"Ты принял приглашение — теперь ты администратор "
                    f"«{venue}».\nЗапросы на визит будут приходить сюда.",
                    reply_markup=admin_menu())
@@ -416,14 +417,12 @@ async def callback_admins(c: types.CallbackQuery):
     rows = []
     kb = []
     for i, aid in enumerate(admins):
-        try:
-            ch = await c.bot.get_chat(aid)
-            name = ("@" + ch.username) if ch.username else ch.full_name
-        except Exception:
-            name = str(aid)
+        name = await _display_name(c.bot, aid)
         rows.append(f"• {name}")
         kb.append([InlineKeyboardButton(
-            text=f"🗑 {name}", callback_data=f"admdel:{idx}:{i}")])
+            text=f"✏️ {name}", callback_data=f"admname:{idx}:{i}"),
+            InlineKeyboardButton(
+            text="🗑", callback_data=f"admdel:{idx}:{i}")])
     kb.append([InlineKeyboardButton(text="➕ Пригласить админа",
                                     callback_data=f"adminv:{idx}")])
     kb.append([InlineKeyboardButton(text="← Назад к объекту",
@@ -454,6 +453,37 @@ async def callback_admin_invite(c: types.CallbackQuery):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="← Назад", callback_data=f"admlist:{int(c.data.removeprefix('adminv:'))}")]]))
     await c.answer("Приглашение отправлено — перешли ссылку админу.")
+
+
+@router.callback_query(F.data.startswith("admname:"))
+async def callback_admin_rename(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    try:
+        _idx_s, aid_i = c.data.removeprefix("admname:").split(":", 1)
+        place = _pending_places[c.from_user.id][int(_idx_s)]
+        aid = store.admins_for(place.name)[int(aid_i)]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    _awaiting_name_for[c.from_user.id] = aid
+    cur = store.name_of(aid)
+    await c.message.answer(
+        f"Напиши псевдоним для {await _display_name(c.bot, aid)}"
+        + (f" (сейчас: {cur})" if cur else "") + ":")
+    await c.answer()
+
+
+@router.callback_query(F.data == "setname")
+async def callback_set_own_name(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    _awaiting_name_for[c.from_user.id] = c.from_user.id
+    cur = store.name_of(c.from_user.id)
+    await c.message.answer(
+        "Напиши свой псевдоним — его будут видеть администраторы"
+        + (f" (сейчас: {cur})" if cur else "") + ":")
+    await c.answer()
 
 
 @router.callback_query(F.data.startswith("admdel:"))
@@ -727,10 +757,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     kb = _req_kb(req_id)
     # m.from_user can be the bot itself when the flow started from a
     # callback on a bot message — resolve the owner's profile instead.
-    try:
-        owner_name = (await m.bot.get_chat(uid)).full_name or "владельца"
-    except Exception:
-        owner_name = getattr(m.from_user, "full_name", "") or "владельца"
+    owner_name = await _display_name(m.bot, uid)
     what = service or place.name
     text = (f"Привет. Давай отметим «{what}» от {owner_name}.\n"
             f"Заведение: «{place.name}» — готов подтвердить?")
@@ -809,8 +836,8 @@ async def callback_req_decline(c: types.CallbackQuery):
     await c.answer("Отклонено.")
     await c.message.edit_text(c.message.text + "\n\n✋ Ты отклонил.")
     await _broadcast(c.bot, req["venue"], req["owner"],
-                     f"✋ Администратор {c.from_user.full_name} не может "
-                     f"принять «{req['venue']}».")
+                     f"✋ Администратор {await _display_name(c.bot, c.from_user.id)} "
+                     f"не может принять «{req['venue']}».")
     if pend["declined"] >= set(store.admins_for(req["venue"])):
         pend["result"] = "declined"
         pend["event"].set()
@@ -1091,6 +1118,9 @@ def _settings_kb() -> InlineKeyboardMarkup:
             text="Смещение координат: "
                  + ("вкл (10-30 м)" if store.jitter_on() else "выкл (точная точка)"),
             callback_data="setjitter")],
+        [InlineKeyboardButton(
+            text="✏️ Мой псевдоним",
+            callback_data="setname")],
         [InlineKeyboardButton(text="✕ Закрыть", callback_data="setclose")],
     ])
 
@@ -1180,7 +1210,8 @@ async def _admin_restart(m: types.Message, req: dict) -> None:
         return await m.answer("Объект удалён из списка.")
     await _drop(m)
     await _broadcast(m.bot, place.name, req["owner"],
-                     f"🔁 Администратор {m.chat.id} просит повторить "
+                     f"🔁 Администратор {await _display_name(m.bot, m.chat.id)} "
+                     f"просит повторить "
                      f"«{place.name}» — запускаю.")
     store.set_request_state(req["id"], "ready")
     await _run_checkin(m, place, req["service"] or None, req["id"])
@@ -1188,6 +1219,12 @@ async def _admin_restart(m: types.Message, req: dict) -> None:
 @router.message(F.text)
 async def free_text(m: types.Message):
     uid = m.from_user.id
+    if uid in _awaiting_name_for and m.from_user.id in config.allowed_users:
+        target = _awaiting_name_for.pop(uid)
+        store.set_name(target, m.text.strip()[:64])
+        return await m.answer(
+            f"Псевдоним сохранён: {m.text.strip()[:64]}",
+            reply_markup=main_menu())
     if uid not in _awaiting_place_name or m.from_user.id not in config.allowed_users:
         return
     query = m.text.strip()

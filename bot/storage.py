@@ -113,6 +113,12 @@ class PlaceStore:
     def jitter_on(self) -> bool:
         return self.get_setting("jitter", "1") != "0"
 
+    def set_name(self, tg_id: int, alias: str) -> None:
+        self.set_setting(f"name:{tg_id}", alias)
+
+    def name_of(self, tg_id: int) -> str:
+        return self.get_setting(f"name:{tg_id}")
+
     # ---------- venue admins ----------
 
     def add_admin(self, venue: str, tg_id: int) -> None:
