@@ -822,15 +822,17 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     await _broadcast(m.bot, place.name, uid,
                      f"📨 Запрос отправлен администраторам «{place.name}»{svc}.",
                      exclude={uid})
+    # The reply keyboard rides on this plain message — the waiting text
+    # below carries the inline force button and can't hold it.
+    await m.answer(
+        f"📨 Запрос отправлен администраторам «{place.name}»{svc}.",
+        reply_markup=main_menu())
     kb_o = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="▶️ Запустить без подтверждения",
                              callback_data=f"reqgo:{req_id}")]])
-    # The keyboard rides on the last plain message — the force button
-    # needs its own inline-keyboard message, so send it separately.
     await m.answer(
-        f"⏳ Жду готовности администратора до 22:30…{svc}",
-        reply_markup=main_menu())
-    await m.answer("▶️ Можно запустить сразу:", reply_markup=kb_o)
+        f"⏳ Жду готовности администратора до 22:30…{svc}\n"
+        "Или запусти сразу:", reply_markup=kb_o)
 
     wait_s = _secs_until_close()
     try:
