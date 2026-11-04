@@ -60,7 +60,7 @@ BTN_ADM_RESTART = "Перезапустить запрос"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
-    row1 = [KeyboardButton(text=BTN_STOP)]
+    row1 = []
     req = store.current_request()
     if req:
         row1.append(KeyboardButton(text=f"⏳ {req['venue']}"))
@@ -68,9 +68,10 @@ def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             row1,
+            [KeyboardButton(text=BTN_STOP), KeyboardButton(text=BTN_PLACES)],
             [
-                KeyboardButton(text=BTN_PLACES),
                 KeyboardButton(text=BTN_SHOT),
+                KeyboardButton(text=BTN_UPDATE),
                 KeyboardButton(text=BTN_SETTINGS),
             ],
         ],
