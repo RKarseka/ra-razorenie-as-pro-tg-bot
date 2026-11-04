@@ -60,20 +60,19 @@ BTN_ADM_RESTART = "Перезапустить запрос"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
+    row1 = [KeyboardButton(text=BTN_STOP)]
+    req = store.current_request()
+    if req:
+        row1.append(KeyboardButton(text=f"⏳ {req['venue']}"))
+    row1.append(KeyboardButton(text=BTN_CHECKIN))
     return ReplyKeyboardMarkup(
         keyboard=[
+            row1,
             [
-                KeyboardButton(text=BTN_CHECKIN),
                 KeyboardButton(text=BTN_PLACES),
-                KeyboardButton(text=BTN_ADD_PLACE),
-            ],
-            [
-                KeyboardButton(text=BTN_STOP),
                 KeyboardButton(text=BTN_SHOT),
-                KeyboardButton(text=BTN_STATUS),
+                KeyboardButton(text=BTN_SETTINGS),
             ],
-            [KeyboardButton(text=BTN_DUMP), KeyboardButton(text=BTN_UPDATE),
-             KeyboardButton(text=BTN_SETTINGS)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -221,7 +220,11 @@ async def _accept_invite(m: types.Message, token: str) -> None:
 async def cmd_places(m: types.Message):
     places = store.list()
     if not places:
-        return await m.answer("No places yet. /addplace name lat lon", reply_markup=main_menu())
+        return await m.answer(
+            "Объектов пока нет.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="➕ Добавить объект",
+                                     callback_data="addplc")]]))
     lines = [
         f"• {p.name}: {p.lat}, {p.lon}" + (f" — {p.address}" if p.address else "")
         for p in places
@@ -231,6 +234,8 @@ async def cmd_places(m: types.Message):
         [InlineKeyboardButton(text=p.name, callback_data=f"plc:{i}")]
         for i, p in enumerate(places)
     ]
+    buttons.append([InlineKeyboardButton(text="➕ Добавить объект",
+                                         callback_data="addplc")])
     await m.answer(
         "\n".join(lines) + "\n\nНажми на объект — откроются действия.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
@@ -408,11 +413,27 @@ async def callback_places_back(c: types.CallbackQuery):
         [InlineKeyboardButton(text=p.name, callback_data=f"plc:{i}")]
         for i, p in enumerate(places)
     ]
+    buttons.append([InlineKeyboardButton(text="➕ Добавить объект",
+                                         callback_data="addplc")])
     await c.message.edit_text(
         "\n".join(lines) + "\n\nНажми на объект — откроются действия.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await c.answer()
+
+
+@router.callback_query(F.data == "addplc")
+async def callback_add_place(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    _awaiting_place_name.add(c.from_user.id)
+    await c.answer()
+    await c.message.answer(
+        "Напиши название заведения — найду его на карте и предложу варианты.\n"
+        "Можно ссылкой «Поделиться» из Яндекс/Google Карт "
+        "или координатами: 53.915323, 27.571478",
+        reply_markup=main_menu(),
+    )
 
 
 @router.callback_query(F.data.startswith("admlist:"))
@@ -1038,10 +1059,11 @@ async def menu_add_place(m: types.Message):
 @router.message(Command("update"))
 @router.message(F.text == BTN_UPDATE)
 @owner_only
-async def cmd_update(m: types.Message):
+async def cmd_update(m: types.Message, uid: int | None = None):
     """Self-update: git pull in the repo dir + restart the systemd unit."""
     import os
 
+    uid = uid or m.from_user.id
     await _drop(m)
 
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1055,7 +1077,7 @@ async def cmd_update(m: types.Message):
     m1 = await m.answer(f"```\n{text}\n```", parse_mode="Markdown")
     m2 = await m.answer(
         "Перезапускаю бота… (если он молчит пару минут — проверь journalctl)")
-    _track(m.from_user.id, "update", m1.message_id, m2.message_id)
+    _track(uid, "update", m1.message_id, m2.message_id)
     await asyncio.create_subprocess_exec("systemctl", "restart", "asbot")
 
 
@@ -1088,9 +1110,10 @@ async def cmd_shot(m: types.Message):
 
 @router.message(Command("dump"))
 @owner_only
-async def cmd_dump(m: types.Message):
+async def cmd_dump(m: types.Message, uid: int | None = None):
+    uid = uid or m.from_user.id
     await _drop(m)
-    await _untrack(m.bot, m.from_user.id, "dump")
+    await _untrack(m.bot, uid, "dump")
     try:
         await run_in_thread(device.connect)
         xml = await run_in_thread(device.dump_ui)
@@ -1098,7 +1121,7 @@ async def cmd_dump(m: types.Message):
             BufferedInputFile(xml.encode(), filename="hierarchy.xml"),
             caption="UI hierarchy",
         )
-        _track(m.from_user.id, "dump", r.message_id)
+        _track(uid, "dump", r.message_id)
     except Exception as e:
         log.exception("dump failed")
         await m.answer(f"Failed: {e}")
@@ -1106,9 +1129,10 @@ async def cmd_dump(m: types.Message):
 
 @router.message(Command("status"))
 @owner_only
-async def cmd_status(m: types.Message):
+async def cmd_status(m: types.Message, uid: int | None = None):
+    uid = uid or m.from_user.id
     await _drop(m)
-    await _untrack(m.bot, m.from_user.id, "status")
+    await _untrack(m.bot, uid, "status")
     req = store.current_request()
     if req:
         svc = f" · {req['service']}" if req["service"] else ""
@@ -1123,7 +1147,7 @@ async def cmd_status(m: types.Message):
     except DeviceError as e:
         r = await m.answer(f"Device unreachable: {e}\n{req_line}",
                            reply_markup=main_menu())
-    _track(m.from_user.id, "status", r.message_id)
+    _track(uid, "status", r.message_id)
 
 
 @router.message(F.text == BTN_SHOT)
@@ -1153,6 +1177,10 @@ def _settings_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             text="✏️ Мой псевдоним",
             callback_data="setname")],
+        [InlineKeyboardButton(text="🖥 Статус устройства",
+                              callback_data="setstatus")],
+        [InlineKeyboardButton(text="🧩 Дамп UI", callback_data="setdump")],
+        [InlineKeyboardButton(text="🔄 Обновить бота", callback_data="setupdate")],
         [InlineKeyboardButton(text="✕ Закрыть", callback_data="setclose")],
     ])
 
@@ -1175,6 +1203,44 @@ async def callback_set_jitter(c: types.CallbackQuery):
     store.set_setting("jitter", "0" if on else "1")
     await c.message.edit_text("Настройки:", reply_markup=_settings_kb())
     await c.answer("Смещение: " + ("выкл" if on else "вкл"))
+
+
+@router.callback_query(F.data == "setstatus")
+async def callback_set_status(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    await c.answer()
+    await cmd_status(c.message, c.from_user.id)
+
+
+@router.callback_query(F.data == "setdump")
+async def callback_set_dump(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    await c.answer()
+    await cmd_dump(c.message, c.from_user.id)
+
+
+@router.callback_query(F.data == "setupdate")
+async def callback_set_update(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    await c.answer()
+    await cmd_update(c.message, c.from_user.id)
+
+
+@router.message(F.text.startswith("⏳"))
+@owner_only
+async def menu_current_req(m: types.Message):
+    await _drop(m)
+    req = store.current_request()
+    if not req:
+        return await m.answer("Активных запросов нет.",
+                              reply_markup=main_menu())
+    svc = f" · {req['service']}" if req["service"] else ""
+    await m.answer(
+        f"Текущий запрос: «{req['venue']}»{svc} — {req['state']}",
+        reply_markup=main_menu())
 
 
 @router.callback_query(F.data == "setclose")
