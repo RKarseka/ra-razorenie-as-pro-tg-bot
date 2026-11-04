@@ -725,7 +725,12 @@ async def _request_admin_ready(m, place, service, admins) -> None:
                             "declined": set(), "owner": uid}
 
     kb = _req_kb(req_id)
-    owner_name = getattr(m.from_user, "full_name", "") or "владельца"
+    # m.from_user can be the bot itself when the flow started from a
+    # callback on a bot message — resolve the owner's profile instead.
+    try:
+        owner_name = (await m.bot.get_chat(uid)).full_name or "владельца"
+    except Exception:
+        owner_name = getattr(m.from_user, "full_name", "") or "владельца"
     what = service or place.name
     text = (f"Привет. Давай отметим «{what}» от {owner_name}.\n"
             f"Заведение: «{place.name}» — готов подтвердить?")
