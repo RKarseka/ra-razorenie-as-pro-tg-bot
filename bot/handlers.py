@@ -852,6 +852,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     pending = _pending_req.pop(req_id, None)
     for aid in admins:
         await _untrack(m.bot, aid, "admreq")
+    await _drop(r)  # the waiting message is stale in every outcome
 
     if result in ("ready", "force"):
         if result == "ready":
