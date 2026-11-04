@@ -12,6 +12,8 @@ from aiogram.types import (
     BufferedInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
 
@@ -57,93 +59,29 @@ BTN_SETTINGS = "Настройки"
 BTN_ADM_RESTART = "Перезапустить запрос"
 
 
-MENU_TEXT = "Выбери действие кнопкой ниже."
-
-
-def _menu_kb() -> InlineKeyboardMarkup:
+def main_menu() -> ReplyKeyboardMarkup:
     row1 = []
     req = store.current_request()
     if req:
-        row1.append(InlineKeyboardButton(
-            text=f"⏳ {req['venue']}", callback_data="m:req"))
-    row1.append(InlineKeyboardButton(text=BTN_CHECKIN,
-                                     callback_data="m:checkin"))
-    return InlineKeyboardMarkup(inline_keyboard=[
-        row1,
-        [InlineKeyboardButton(text=BTN_STOP, callback_data="m:stop"),
-         InlineKeyboardButton(text=BTN_PLACES, callback_data="m:places")],
-        [InlineKeyboardButton(text=BTN_SHOT, callback_data="m:shot"),
-         InlineKeyboardButton(text=BTN_UPDATE, callback_data="m:update"),
-         InlineKeyboardButton(text=BTN_SETTINGS, callback_data="m:settings")],
-    ])
+        row1.append(KeyboardButton(text=f"⏳ {req['venue']}"))
+    row1.append(KeyboardButton(text=BTN_CHECKIN))
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            row1,
+            [KeyboardButton(text=BTN_STOP), KeyboardButton(text=BTN_PLACES)],
+            [
+                KeyboardButton(text=BTN_SHOT),
+                KeyboardButton(text=BTN_UPDATE),
+                KeyboardButton(text=BTN_SETTINGS),
+            ],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
 
 
 def admin_menu() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
-
-
-@router.callback_query(F.data == "m:req")
-async def callback_menu_req(c: types.CallbackQuery):
-    if c.from_user.id not in config.allowed_users:
-        return await c.answer()
-    req = store.current_request()
-    if not req:
-        return await c.answer("Активных запросов нет.", show_alert=True)
-    svc = f" · {req['service']}" if req["service"] else ""
-    await c.answer(
-        f"Текущий запрос: «{req['venue']}»{svc} — {req['state']}",
-        show_alert=True)
-
-
-@router.callback_query(F.data == "m:checkin")
-async def callback_menu_checkin(c: types.CallbackQuery):
-    if c.from_user.id not in config.allowed_users:
-        return await c.answer()
-    keyboard = place_menu(c.from_user.id)
-    await c.answer()
-    if not keyboard:
-        return await c.message.answer("Объектов пока нет.")
-    await c.message.answer("Выбери объект:", reply_markup=keyboard)
-
-
-@router.callback_query(F.data == "m:stop")
-async def callback_menu_stop(c: types.CallbackQuery):
-    if c.from_user.id not in config.allowed_users:
-        return await c.answer()
-    await c.answer()
-    await cmd_stop(c.message, c.from_user.id)
-
-
-@router.callback_query(F.data == "m:places")
-async def callback_menu_places(c: types.CallbackQuery):
-    if c.from_user.id not in config.allowed_users:
-        return await c.answer()
-    await c.answer()
-    await cmd_places(c.message, c.from_user.id)
-
-
-@router.callback_query(F.data == "m:shot")
-async def callback_menu_shot(c: types.CallbackQuery):
-    if c.from_user.id not in config.allowed_users:
-        return await c.answer()
-    await c.answer()
-    await cmd_shot(c.message, c.from_user.id)
-
-
-@router.callback_query(F.data == "m:update")
-async def callback_menu_update(c: types.CallbackQuery):
-    if c.from_user.id not in config.allowed_users:
-        return await c.answer()
-    await c.answer()
-    await cmd_update(c.message, c.from_user.id)
-
-
-@router.callback_query(F.data == "m:settings")
-async def callback_menu_settings(c: types.CallbackQuery):
-    if c.from_user.id not in config.allowed_users:
-        return await c.answer()
-    await c.answer()
-    await menu_settings(c.message, c.from_user.id)
 
 
 _TZ3 = timezone(timedelta(hours=3))
@@ -225,35 +163,14 @@ async def _autodelete(m: types.Message, secs: int = 20) -> None:
     await _drop(m)
 
 
-async def _refresh_menu(bot, uid: int) -> None:
-    """One pinned message carries the whole menu — edit it in place so
-    the ⏳ chip can appear/disappear without the anchor ever moving;
-    send+pin a fresh one only when the tracked message is gone."""
-    raw = store.get_setting(f"trk:{uid}:menu", "")
-    if raw:
-        try:
-            await bot.edit_message_text(
-                MENU_TEXT, chat_id=uid,
-                message_id=int(raw.split(",")[-1]),
-                reply_markup=_menu_kb())
-            return
-        except Exception as e:
-            if "not modified" in str(e).lower():
-                return
-    await _untrack(bot, uid, "menu")
-    try:  # kill any lingering reply keyboard once and for all
-        t = await bot.send_message(uid, "⌨️",
-                                   reply_markup=ReplyKeyboardRemove())
-        await t.delete()
-    except Exception:
-        pass
-    r = await bot.send_message(uid, MENU_TEXT, reply_markup=_menu_kb())
+async def _send_menu(m: types.Message, uid: int) -> None:
+    """Re-anchor the reply keyboard: deleting the message that last
+    carried reply_markup hides the keyboard, so keep it on one
+    persistent 'menu' message — resend it fresh, track, untrack old."""
+    await _untrack(m.bot, uid, "menu")
+    r = await m.answer("Выбери действие кнопкой ниже.",
+                       reply_markup=main_menu())
     _track(uid, "menu", r.message_id)
-    try:
-        await bot.pin_chat_message(uid, r.message_id,
-                                   disable_notification=True)
-    except Exception:
-        pass
 
 
 def _track(uid: int, kind: str, *ids: int) -> None:
@@ -290,7 +207,7 @@ async def cmd_help(m: types.Message, command: CommandObject):
                                reply_markup=admin_menu())
             _track(uid, "menu", r.message_id)
         return  # silently ignore strangers
-    await _refresh_menu(m.bot, uid)
+    await _send_menu(m, uid)
 
 
 async def _accept_invite(m: types.Message, token: str) -> None:
@@ -313,10 +230,8 @@ async def _accept_invite(m: types.Message, token: str) -> None:
 
 @router.message(Command("places"))
 @owner_only
-async def cmd_places(m: types.Message, uid: int | None = None):
-    if uid is None:
-        uid = m.from_user.id
-        await _drop(m)
+async def cmd_places(m: types.Message):
+    await _drop(m)
     places = store.list()
     if not places:
         return await m.answer(
@@ -328,7 +243,7 @@ async def cmd_places(m: types.Message, uid: int | None = None):
         f"• {p.name}: {p.lat}, {p.lon}" + (f" — {p.address}" if p.address else "")
         for p in places
     ]
-    _pending_places[uid] = places
+    _pending_places[m.from_user.id] = places
     buttons = [
         [InlineKeyboardButton(text=p.name, callback_data=f"plc:{i}")]
         for i, p in enumerate(places)
@@ -414,14 +329,16 @@ async def cmd_addplace(m: types.Message, command: CommandObject):
             found = await run_in_thread(geocode, query, 1)
         except Exception as e:
             log.exception("geocode failed")
-            return await m.answer(f"Геокодер недоступен: {e}")
+            return await m.answer(f"Геокодер недоступен: {e}", reply_markup=main_menu())
         if not found:
             return await m.answer(
                 f"Не нашёл «{query}» на карте. Пришли координаты из Яндекс Карт.",
+                reply_markup=main_menu(),
             )
         latitude, longitude, disp = found[0]
         await m.answer(
             f"Нашёл: {disp}\nКоординаты: {latitude}, {longitude}",
+            reply_markup=main_menu(),
         )
     await discover_venues(m, m.from_user.id, name, latitude, longitude)
 
@@ -431,7 +348,7 @@ async def discover_venues(m: types.Message, uid: int, name: str,
     """Save the typed name if any, set the point and offer nearby venues."""
     if name:
         store.add(name, latitude, longitude)
-        await m.answer(f"Saved {name} ({latitude}, {longitude})")
+        await m.answer(f"Saved {name} ({latitude}, {longitude})", reply_markup=main_menu())
 
     progress = await m.answer("Смотрю, какие заведения рядом с этой точкой…")
     try:
@@ -530,6 +447,7 @@ async def callback_add_place(c: types.CallbackQuery):
         "Напиши название заведения — найду его на карте и предложу варианты.\n"
         "Можно ссылкой «Поделиться» из Яндекс/Google Карт "
         "или координатами: 53.915323, 27.571478",
+        reply_markup=main_menu(),
     )
 
 
@@ -691,7 +609,7 @@ async def callback_del_place(c: types.CallbackQuery):
     if store.remove(name):
         await c.answer(f"Удалено: {name}")
         await _drop(c.message)
-        await c.message.answer(f"Removed {name}")
+        await c.message.answer(f"Removed {name}", reply_markup=main_menu())
     else:
         await c.answer("Уже удалён.", show_alert=True)
 
@@ -719,6 +637,7 @@ async def callback_save_place(c: types.CallbackQuery):
         f"Адрес: {detail}\n"
         f"Координаты: {lat}, {lon}\n"
         f"Ищется в списке как: «{norm_name(name)}»",
+        reply_markup=main_menu(),
     )
 
     prog = await c.message.answer("Собираю услуги заведения…")
@@ -810,8 +729,8 @@ async def callback_svc_cancel(c: types.CallbackQuery):
 async def cmd_delplace(m: types.Message, command: CommandObject):
     await _drop(m)
     if not command.args or not store.remove(command.args.strip()):
-        return await m.answer("Not found. /places to list")
-    await m.answer("Removed")
+        return await m.answer("Not found. /places to list", reply_markup=main_menu())
+    await m.answer("Removed", reply_markup=main_menu())
 
 
 @router.message(Command("checkin"))
@@ -819,10 +738,10 @@ async def cmd_delplace(m: types.Message, command: CommandObject):
 async def cmd_checkin(m: types.Message, command: CommandObject):
     await _drop(m)
     if not command.args:
-        return await m.answer("Usage: /checkin name")
+        return await m.answer("Usage: /checkin name", reply_markup=main_menu())
     place = store.get(command.args.strip())
     if not place:
-        return await m.answer("Unknown place. /places to list")
+        return await m.answer("Unknown place. /places to list", reply_markup=main_menu())
 
     await offer_services(m, m.from_user.id, place)
 
@@ -912,7 +831,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     # The waiting message carries the inline force button, so it cannot
     # refresh the reply keyboard — send a self-deleting anchor so the
     # ⏳ request chip appears on it.
-    await _refresh_menu(m.bot, uid)
+    await _send_menu(m, uid)
 
     wait_s = _secs_until_close()
     try:
@@ -935,7 +854,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
                              f"▶️ Запуск без подтверждения администратора "
                              f"— «{place.name}»{svc}.", exclude={uid})
         await _run_checkin(m, place, service, req_id)
-        await _refresh_menu(m.bot, uid)
+        await _send_menu(m, uid)
         return
 
     store.set_request_state(req_id, "closed")
@@ -945,10 +864,11 @@ async def _request_admin_ready(m, place, service, admins) -> None:
                          exclude={uid})
     elif result == "declined":
         await m.answer(f"Администраторы «{place.name}» не могут принять "
-                       "запрос сейчас.")
+                       "запрос сейчас.", reply_markup=main_menu())
     else:
         await m.answer(f"⏱ Не дождался готовности администратора "
-                       f"«{place.name}» до 22:30 — запрос закрыт.")
+                       f"«{place.name}» до 22:30 — запрос закрыт.",
+                       reply_markup=main_menu())
         await _broadcast(m.bot, place.name, uid,
                          f"⏱ Запрос в «{place.name}»{svc} истёк "
                          "без подтверждения.", exclude={uid})
@@ -1124,6 +1044,7 @@ async def menu_checkin(m: types.Message):
     if not keyboard:
         return await m.answer(
             "Объектов пока нет. Нажми «Добавить объект».",
+            reply_markup=main_menu(),
         )
     await m.answer("Выбери объект:", reply_markup=keyboard)
 
@@ -1160,6 +1081,7 @@ async def menu_add_place(m: types.Message):
         "Напиши название заведения — найду его на карте и предложу варианты.\n"
         "Можно ссылкой «Поделиться» из Яндекс/Google Карт "
         "или координатами: 53.915323, 27.571478",
+        reply_markup=main_menu(),
     )
 
 
@@ -1190,12 +1112,10 @@ async def cmd_update(m: types.Message, uid: int | None = None):
 
 @router.message(Command("stop"))
 @owner_only
-async def cmd_stop(m: types.Message, uid: int | None = None):
-    if uid is None:
-        uid = m.from_user.id
-        await _drop(m)
+async def cmd_stop(m: types.Message):
+    await _drop(m)
     for pend in _pending_req.values():
-        if pend["owner"] == uid and pend["result"] is None:
+        if pend["owner"] == m.from_user.id and pend["result"] is None:
             pend["result"] = "cancelled"
             pend["event"].set()
     store.close_open_requests()  # the chip must leave the keyboard at once;
@@ -1205,23 +1125,21 @@ async def cmd_stop(m: types.Message, uid: int | None = None):
         await run_in_thread(device.stop_visit)
         r = await m.answer("Визит остановлен: геопозиция снята, Allsports закрыт")
         asyncio.create_task(_autodelete(r))
-        await _refresh_menu(m.bot, uid)
+        await _send_menu(m, m.from_user.id)
     except DeviceError as e:
         await m.answer(f"Failed: {e}")
 
 
 @router.message(Command("shot"))
 @owner_only
-async def cmd_shot(m: types.Message, uid: int | None = None):
-    if uid is None:
-        uid = m.from_user.id
-        await _drop(m)
-    await _untrack(m.bot, uid, "shot")
+async def cmd_shot(m: types.Message):
+    await _drop(m)
+    await _untrack(m.bot, m.from_user.id, "shot")
     try:
         await run_in_thread(device.connect)
         png = await run_in_thread(device.screenshot)
         r = await m.answer_photo(BufferedInputFile(png, filename="screen.png"))
-        _track(uid, "shot", r.message_id)
+        _track(m.from_user.id, "shot", r.message_id)
     except DeviceError as e:
         await m.answer(f"Failed: {e}")
 
@@ -1260,9 +1178,11 @@ async def cmd_status(m: types.Message, uid: int | None = None):
     try:
         await run_in_thread(device.connect)
         app = await run_in_thread(device.current_app)
-        r = await m.answer(f"Device OK\nForeground: {app}\n{req_line}")
+        r = await m.answer(f"Device OK\nForeground: {app}\n{req_line}",
+                           reply_markup=main_menu())
     except DeviceError as e:
-        r = await m.answer(f"Device unreachable: {e}\n{req_line}")
+        r = await m.answer(f"Device unreachable: {e}\n{req_line}",
+                           reply_markup=main_menu())
     _track(uid, "status", r.message_id)
 
 
@@ -1304,13 +1224,11 @@ def _settings_kb() -> InlineKeyboardMarkup:
 @router.message(F.text == BTN_SETTINGS)
 @router.message(Command("settings"))
 @owner_only
-async def menu_settings(m: types.Message, uid: int | None = None):
-    if uid is None:
-        uid = m.from_user.id
-        await _drop(m)
-    await _untrack(m.bot, uid, "settings")
+async def menu_settings(m: types.Message):
+    await _drop(m)
+    await _untrack(m.bot, m.from_user.id, "settings")
     r = await m.answer("Настройки:", reply_markup=_settings_kb())
-    _track(uid, "settings", r.message_id)
+    _track(m.from_user.id, "settings", r.message_id)
 
 
 @router.callback_query(F.data == "setjitter")
@@ -1353,10 +1271,12 @@ async def menu_current_req(m: types.Message):
     await _drop(m)
     req = store.current_request()
     if not req:
-        return await m.answer("Активных запросов нет.")
+        return await m.answer("Активных запросов нет.",
+                              reply_markup=main_menu())
     svc = f" · {req['service']}" if req["service"] else ""
     await m.answer(
-        f"Текущий запрос: «{req['venue']}»{svc} — {req['state']}")
+        f"Текущий запрос: «{req['venue']}»{svc} — {req['state']}",
+        reply_markup=main_menu())
 
 
 @router.callback_query(F.data == "setclose")
@@ -1439,7 +1359,8 @@ async def free_text(m: types.Message):
         target = _awaiting_name_for.pop(uid)
         store.set_name(target, m.text.strip()[:64])
         return await m.answer(
-            f"Псевдоним сохранён: {m.text.strip()[:64]}")
+            f"Псевдоним сохранён: {m.text.strip()[:64]}",
+            reply_markup=main_menu())
     if uid not in _awaiting_place_name or m.from_user.id not in config.allowed_users:
         return
     query = m.text.strip()
