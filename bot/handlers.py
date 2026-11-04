@@ -117,7 +117,10 @@ async def _broadcast(bot, venue: str, owner_uid: int, text: str,
     sent = []
     for uid in targets:
         try:
-            sent.append(await bot.send_message(uid, text))
+            msg = await bot.send_message(uid, text)
+            sent.append(msg)
+            if uid != owner_uid:  # admin chats self-clean after 20 min
+                asyncio.create_task(_autodelete(msg, 1200))
         except Exception:
             log.exception("broadcast to %s failed", uid)
     return sent
@@ -830,6 +833,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
             await _untrack(m.bot, aid, "admreq")
             r = await m.bot.send_message(aid, text, reply_markup=kb)
             _track(aid, "admreq", r.message_id)
+            asyncio.create_task(_autodelete(r, 1200))
         except Exception:
             pass
     # Admins already have the detailed ping above — no extra 📨 copy.
@@ -976,6 +980,7 @@ async def _remind_admin(bot, req_id: str) -> None:
                 "подтверди его в приложении или сообщи владельцу.",
                 reply_markup=admin_menu())
             _track(aid, "admreq", r.message_id)
+            asyncio.create_task(_autodelete(r, 1200))
         except Exception:
             pass
 
