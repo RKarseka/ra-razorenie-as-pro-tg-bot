@@ -859,9 +859,12 @@ async def _request_admin_ready(m, place, service, admins) -> None:
 
     if result in ("ready", "force"):
         if result == "ready":
+            rr = await m.answer(f"✅ Администратор готов — запускаю "
+                                f"«{place.name}»{svc}.")
+            _track_more(uid, "req", rr.message_id)
             await _broadcast(m.bot, place.name, uid,
                              f"✅ Администратор готов — запускаю "
-                             f"«{place.name}»{svc}.")
+                             f"«{place.name}»{svc}.", exclude={uid})
         else:
             await _broadcast(m.bot, place.name, uid,
                              f"▶️ Запуск без подтверждения администратора "
