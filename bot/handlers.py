@@ -231,6 +231,7 @@ async def _accept_invite(m: types.Message, token: str) -> None:
 @router.message(Command("places"))
 @owner_only
 async def cmd_places(m: types.Message):
+    await _drop(m)
     places = store.list()
     if not places:
         return await m.answer(
@@ -311,6 +312,7 @@ def coords_from_link(text: str) -> tuple[float, float] | None:
 @router.message(Command("addplace"))
 @owner_only
 async def cmd_addplace(m: types.Message, command: CommandObject):
+    await _drop(m)
     name = ""
     try:
         parts = command.args.replace(",", " ").split()
@@ -725,6 +727,7 @@ async def callback_svc_cancel(c: types.CallbackQuery):
 @router.message(Command("delplace"))
 @owner_only
 async def cmd_delplace(m: types.Message, command: CommandObject):
+    await _drop(m)
     if not command.args or not store.remove(command.args.strip()):
         return await m.answer("Not found. /places to list", reply_markup=main_menu())
     await m.answer("Removed", reply_markup=main_menu())
@@ -733,6 +736,7 @@ async def cmd_delplace(m: types.Message, command: CommandObject):
 @router.message(Command("checkin"))
 @owner_only
 async def cmd_checkin(m: types.Message, command: CommandObject):
+    await _drop(m)
     if not command.args:
         return await m.answer("Usage: /checkin name", reply_markup=main_menu())
     place = store.get(command.args.strip())
@@ -1035,6 +1039,7 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
 @router.message(F.text == BTN_CHECKIN)
 @owner_only
 async def menu_checkin(m: types.Message):
+    await _drop(m)
     keyboard = place_menu(m.from_user.id)
     if not keyboard:
         return await m.answer(
@@ -1070,6 +1075,7 @@ async def menu_places(m: types.Message):
 @router.message(F.text == BTN_ADD_PLACE)
 @owner_only
 async def menu_add_place(m: types.Message):
+    await _drop(m)
     _awaiting_place_name.add(m.from_user.id)
     await m.answer(
         "Напиши название заведения — найду его на карте и предложу варианты.\n"
@@ -1307,6 +1313,7 @@ async def menu_adm_restart(m: types.Message):
     uid = m.from_user.id
     if not store.is_admin(uid):
         return
+    await _drop(m)
     reqs = store.open_requests_for_admin(uid)
     if not reqs:
         return await m.answer("Нет открытых запросов.")
