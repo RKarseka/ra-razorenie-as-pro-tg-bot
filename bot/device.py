@@ -76,13 +76,23 @@ class Device:
         return r.stdout
 
     def connect(self) -> str:
-        r = subprocess.run(
-            [ADB, "connect", self.serial], capture_output=True, text=True, timeout=15
-        )
-        out = (r.stdout + r.stderr).strip()
+        out = self._try_connect()
+        if "connected" not in out:
+            # Possibly a stale adb-server session — drop and retry once.
+            subprocess.run(
+                [ADB, "disconnect", self.serial],
+                capture_output=True, text=True, timeout=15,
+            )
+            out = self._try_connect()
         if "connected" not in out:
             raise DeviceError(f"adb connect: {out}")
         return out
+
+    def _try_connect(self) -> str:
+        r = subprocess.run(
+            [ADB, "connect", self.serial], capture_output=True, text=True, timeout=15
+        )
+        return (r.stdout + r.stderr).strip()
 
     # ---------- fake gps ----------
 
