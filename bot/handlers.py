@@ -185,6 +185,13 @@ def _track(uid: int, kind: str, *ids: int) -> None:
     store.set_setting(f"trk:{uid}:{kind}", ",".join(str(i) for i in ids if i))
 
 
+def _track_more(uid: int, kind: str, *ids: int) -> None:
+    """Append to the tracked transient ids of a kind (unlike _track)."""
+    raw = store.get_setting(f"trk:{uid}:{kind}", "")
+    cur = [s for s in raw.split(",") if s]
+    store.set_setting(f"trk:{uid}:{kind}", ",".join(cur + [str(i) for i in ids if i]))
+
+
 async def _untrack(bot, uid: int, kind: str) -> None:
     """Delete the stored transient messages of a kind and clear the list."""
     raw = store.get_setting(f"trk:{uid}:{kind}", "")
@@ -830,10 +837,12 @@ async def _request_admin_ready(m, place, service, admins) -> None:
                      exclude={uid})
     # One message carries the keyboard; the force-launch action sits
     # in the keyboard itself while the request is waiting.
-    await m.answer(
+    await _untrack(m.bot, uid, "req")
+    r = await m.answer(
         f"📨 Запрос отправлен администраторам «{place.name}»{svc}.\n"
         "⏳ Жду готовности до 22:30.",
         reply_markup=main_menu())
+    _track_more(uid, "req", r.message_id)
 
     wait_s = _secs_until_close()
     try:
@@ -866,12 +875,14 @@ async def _request_admin_ready(m, place, service, admins) -> None:
         for msg in sent:
             asyncio.create_task(_autodelete(msg, 120))
     elif result == "declined":
-        await m.answer(f"Администраторы «{place.name}» не могут принять "
-                       "запрос сейчас.", reply_markup=main_menu())
+        rr = await m.answer(f"Администраторы «{place.name}» не могут принять "
+                            "запрос сейчас.", reply_markup=main_menu())
+        _track_more(uid, "req", rr.message_id)
     else:
-        await m.answer(f"⏱ Не дождался готовности администратора "
-                       f"«{place.name}» до 22:30 — запрос закрыт.",
-                       reply_markup=main_menu())
+        rr = await m.answer(f"⏱ Не дождался готовности администратора "
+                            f"«{place.name}» до 22:30 — запрос закрыт.",
+                            reply_markup=main_menu())
+        _track_more(uid, "req", rr.message_id)
         await _broadcast(m.bot, place.name, uid,
                          f"⏱ Запрос в «{place.name}»{svc} истёк "
                          "без подтверждения.", exclude={uid})
@@ -1026,7 +1037,8 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
         if req_id:
             store.set_request_state(req_id, state)
         # Persistent result doubles as the keyboard anchor.
-        await m.answer(final, reply_markup=main_menu())
+        rr = await m.answer(final, reply_markup=main_menu())
+        _track_more(uid, "req", rr.message_id)
         await _broadcast(m.bot, place.name, uid, f"{place.name}: {final}",
                          exclude={uid})
         if state == "expired" and req_id:
@@ -1115,7 +1127,7 @@ async def cmd_update(m: types.Message, uid: int | None = None):
     # Sweep old transient messages before updating — the boot-time
     # cleanup would only run after the restart.
     for kind in ("update", "menu", "status", "shot", "dump",
-                 "settings", "checkin"):
+                 "settings", "checkin", "req"):
         try:
             await _untrack(m.bot, uid, kind)
         except Exception:
@@ -1150,8 +1162,9 @@ async def cmd_stop(m: types.Message):
     try:
         await run_in_thread(device.connect)
         await run_in_thread(device.stop_visit)
-        await m.answer("Визит остановлен: геопозиция снята, Allsports закрыт",
-                       reply_markup=main_menu())
+        rr = await m.answer("Визит остановлен: геопозиция снята, Allsports закрыт",
+                            reply_markup=main_menu())
+        _track_more(m.from_user.id, "req", rr.message_id)
     except DeviceError as e:
         await m.answer(f"Failed: {e}")
 
