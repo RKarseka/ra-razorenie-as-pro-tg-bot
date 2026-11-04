@@ -817,6 +817,11 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     await m.answer(
         f"⏳ Жду готовности администратора до 22:30…{svc}",
         reply_markup=kb_o)
+    # The waiting message carries the inline force button, so it cannot
+    # refresh the reply keyboard — send a self-deleting anchor so the
+    # ⏳ request chip appears on it.
+    anchor = await m.answer("⌨️", reply_markup=main_menu())
+    asyncio.create_task(_autodelete(anchor, 5))
 
     wait_s = _secs_until_close()
     try:
@@ -839,6 +844,8 @@ async def _request_admin_ready(m, place, service, admins) -> None:
                              f"▶️ Запуск без подтверждения администратора "
                              f"— «{place.name}»{svc}.", exclude={uid})
         await _run_checkin(m, place, service, req_id)
+        anchor = await m.answer("⌨️", reply_markup=main_menu())
+        asyncio.create_task(_autodelete(anchor, 5))
         return
 
     store.set_request_state(req_id, "closed")
@@ -848,10 +855,11 @@ async def _request_admin_ready(m, place, service, admins) -> None:
                          exclude={uid})
     elif result == "declined":
         await m.answer(f"Администраторы «{place.name}» не могут принять "
-                       "запрос сейчас.")
+                       "запрос сейчас.", reply_markup=main_menu())
     else:
         await m.answer(f"⏱ Не дождался готовности администратора "
-                       f"«{place.name}» до 22:30 — запрос закрыт.")
+                       f"«{place.name}» до 22:30 — запрос закрыт.",
+                       reply_markup=main_menu())
         await _broadcast(m.bot, place.name, uid,
                          f"⏱ Запрос в «{place.name}»{svc} истёк "
                          "без подтверждения.", exclude={uid})
