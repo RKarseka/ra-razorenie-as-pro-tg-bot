@@ -832,9 +832,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
             _track(aid, "admreq", r.message_id)
         except Exception:
             pass
-    await _broadcast(m.bot, place.name, uid,
-                     f"📨 Запрос отправлен администраторам «{place.name}»{svc}.",
-                     exclude={uid})
+    # Admins already have the detailed ping above — no extra 📨 copy.
     # One message carries the keyboard; the force-launch action sits
     # in the keyboard itself while the request is waiting.
     await _untrack(m.bot, uid, "req")
