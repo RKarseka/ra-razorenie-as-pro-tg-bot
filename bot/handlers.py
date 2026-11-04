@@ -163,6 +163,16 @@ async def _autodelete(m: types.Message, secs: int = 20) -> None:
     await _drop(m)
 
 
+async def _send_menu(m: types.Message, uid: int) -> None:
+    """Re-anchor the reply keyboard: deleting the message that last
+    carried reply_markup hides the keyboard, so keep it on one
+    persistent 'menu' message — resend it fresh, track, untrack old."""
+    await _untrack(m.bot, uid, "menu")
+    r = await m.answer("Выбери действие кнопкой ниже.",
+                       reply_markup=main_menu())
+    _track(uid, "menu", r.message_id)
+
+
 def _track(uid: int, kind: str, *ids: int) -> None:
     """Persist transient message ids so they can be deleted later,
     including after a restart."""
@@ -197,10 +207,7 @@ async def cmd_help(m: types.Message, command: CommandObject):
                                reply_markup=admin_menu())
             _track(uid, "menu", r.message_id)
         return  # silently ignore strangers
-    await _untrack(m.bot, uid, "menu")
-    r = await m.answer("Выбери действие кнопкой ниже.",
-                       reply_markup=main_menu())
-    _track(uid, "menu", r.message_id)
+    await _send_menu(m, uid)
 
 
 async def _accept_invite(m: types.Message, token: str) -> None:
@@ -820,8 +827,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     # The waiting message carries the inline force button, so it cannot
     # refresh the reply keyboard — send a self-deleting anchor so the
     # ⏳ request chip appears on it.
-    anchor = await m.answer("⌨️", reply_markup=main_menu())
-    asyncio.create_task(_autodelete(anchor, 5))
+    await _send_menu(m, uid)
 
     wait_s = _secs_until_close()
     try:
@@ -844,8 +850,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
                              f"▶️ Запуск без подтверждения администратора "
                              f"— «{place.name}»{svc}.", exclude={uid})
         await _run_checkin(m, place, service, req_id)
-        anchor = await m.answer("⌨️", reply_markup=main_menu())
-        asyncio.create_task(_autodelete(anchor, 5))
+        await _send_menu(m, uid)
         return
 
     store.set_request_state(req_id, "closed")
@@ -1112,9 +1117,9 @@ async def cmd_stop(m: types.Message):
     try:
         await run_in_thread(device.connect)
         await run_in_thread(device.stop_visit)
-        r = await m.answer("Визит остановлен: геопозиция снята, Allsports закрыт",
-                           reply_markup=main_menu())
+        r = await m.answer("Визит остановлен: геопозиция снята, Allsports закрыт")
         asyncio.create_task(_autodelete(r))
+        await _send_menu(m, m.from_user.id)
     except DeviceError as e:
         await m.answer(f"Failed: {e}")
 
