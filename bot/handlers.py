@@ -777,6 +777,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
             f"Заведение: «{place.name}» — готов подтвердить?")
     for aid in admins:
         try:
+            await _untrack(m.bot, aid, "admreq")
             r = await m.bot.send_message(aid, text, reply_markup=kb)
             _track(aid, "admreq", r.message_id)
         except Exception:
@@ -799,6 +800,8 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     except asyncio.TimeoutError:
         result = "timeout"
     pending = _pending_req.pop(req_id, None)
+    for aid in admins:
+        await _untrack(m.bot, aid, "admreq")
 
     if result in ("ready", "force"):
         if result == "ready":
@@ -886,6 +889,7 @@ async def _remind_admin(bot, req_id: str) -> None:
         return
     for aid in store.admins_for(req["venue"]):
         try:
+            await _untrack(bot, aid, "admreq")
             r = await bot.send_message(
                 aid,
                 f"⏰ Напоминание: визит в «{req['venue']}» не принят — "
@@ -1243,6 +1247,7 @@ async def _admin_restart(m: types.Message, req: dict) -> None:
                      f"просит повторить "
                      f"«{place.name}» — запускаю.")
     store.set_request_state(req["id"], "ready")
+    await _untrack(m.bot, m.chat.id, "admreq")
     await _run_checkin(m, place, req["service"] or None, req["id"])
 
 @router.message(F.text)
