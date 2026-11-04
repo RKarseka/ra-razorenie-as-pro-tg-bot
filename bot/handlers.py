@@ -763,7 +763,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     uid = m.chat.id
     req_id = secrets.token_hex(4)
     svc = f" · {service}" if service else ""
-    store.close_open_requests(place.name)
+    store.close_open_requests()
     store.put_request(req_id, place.name, service or "", uid, "waiting")
     _pending_req[req_id] = {"event": asyncio.Event(), "result": None,
                             "declined": set(), "owner": uid}
@@ -1106,13 +1106,20 @@ async def cmd_dump(m: types.Message):
 async def cmd_status(m: types.Message):
     await _drop(m)
     await _untrack(m.bot, m.from_user.id, "status")
+    req = store.current_request()
+    if req:
+        svc = f" · {req['service']}" if req["service"] else ""
+        req_line = f"Текущий запрос: «{req['venue']}»{svc} — {req['state']}"
+    else:
+        req_line = "Активных запросов нет."
     try:
         await run_in_thread(device.connect)
         app = await run_in_thread(device.current_app)
-        r = await m.answer(f"Device OK\nForeground: {app}",
+        r = await m.answer(f"Device OK\nForeground: {app}\n{req_line}",
                            reply_markup=main_menu())
     except DeviceError as e:
-        r = await m.answer(f"Device unreachable: {e}", reply_markup=main_menu())
+        r = await m.answer(f"Device unreachable: {e}\n{req_line}",
+                           reply_markup=main_menu())
     _track(m.from_user.id, "status", r.message_id)
 
 
