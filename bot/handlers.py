@@ -836,7 +836,11 @@ async def _request_admin_ready(m, place, service, admins) -> None:
         return
 
     store.set_request_state(req_id, "closed")
-    if result == "declined":
+    if result == "cancelled":
+        await _broadcast(m.bot, place.name, uid,
+                         f"⛔ Запрос в «{place.name}»{svc} отменён.",
+                         exclude={uid})
+    elif result == "declined":
         await m.answer(f"Администраторы «{place.name}» не могут принять "
                        "запрос сейчас.")
     else:
@@ -1085,6 +1089,10 @@ async def cmd_update(m: types.Message, uid: int | None = None):
 @owner_only
 async def cmd_stop(m: types.Message):
     await _drop(m)
+    for pend in _pending_req.values():
+        if pend["owner"] == m.from_user.id and pend["result"] is None:
+            pend["result"] = "cancelled"
+            pend["event"].set()
     try:
         await run_in_thread(device.connect)
         await run_in_thread(device.stop_visit)
