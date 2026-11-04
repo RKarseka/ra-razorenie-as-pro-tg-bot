@@ -190,8 +190,10 @@ async def cmd_help(m: types.Message, command: CommandObject):
     if uid not in config.allowed_users:
         if store.is_admin(uid):
             venues = "\n".join(f"• {v}" for v in store.venues_of(uid))
-            await m.answer(f"Ты администратор:\n{venues}",
-                           reply_markup=admin_menu())
+            await _untrack(m.bot, uid, "menu")
+            r = await m.answer(f"Ты администратор:\n{venues}",
+                               reply_markup=admin_menu())
+            _track(uid, "menu", r.message_id)
         return  # silently ignore strangers
     await _untrack(m.bot, uid, "menu")
     r = await m.answer("Выбери действие кнопкой ниже.",
