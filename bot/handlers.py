@@ -512,9 +512,12 @@ async def callback_admin_invite(c: types.CallbackQuery):
     me = await c.bot.get_me()
     link = f"https://t.me/{me.username}?start=adm_{token}"
     await c.message.edit_text(
-        f"Приглашение для администратора «{place.name}» создано.\n\n"
-        f"Перешли админу эту ссылку (одноразовая) — нажми на неё, чтобы скопировать:\n"
-        f"`{link}`",
+        f"Привет! Приглашаю тебя быть администратором «{place.name}».\n\n"
+        "Перейди по ссылке и нажми «Старт» — бот будет присылать запросы "
+        "на отметку посещения, а тебе останется только подтвердить их "
+        "в приложении.\n\n"
+        f"Ссылка одноразовая:\n`{link}`\n\n"
+        "— перешли это сообщение админу целиком",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="← Назад", callback_data=f"admlist:{int(c.data.removeprefix('adminv:'))}")]]))
