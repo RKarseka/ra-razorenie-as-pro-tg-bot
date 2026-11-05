@@ -344,7 +344,8 @@ class Device:
         # «Время ожидания истекло» (~2.5 min window) or a confirmed visit.
         step("await_outcome")
         expired_re = "(?is).*время\s*ожидани.*истек.*"
-        confirm_re = "(?is).*(визит\s*подтвержд|подтверждён|одобрен|принят).*"
+        confirm_re = ("(?is).*(визит\s*подтвержд|подтверждён|одобрен|принят|"
+                      "совершили\s*визит|хорошей\s*тренировки).*")
         outcome = "sent"
         deadline = time.time() + 200
         while time.time() < deadline:
