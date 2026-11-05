@@ -233,13 +233,16 @@ async def _accept_invite(m: types.Message, token: str) -> None:
     venue, invited_by = row
     store.add_admin(venue, m.from_user.id)
     who = await _display_name(m.bot, m.from_user.id)
-    await m.answer(f"Ты принял приглашение — теперь ты администратор "
-                   f"«{venue}».\nЗапросы на визит будут приходить сюда.",
-                   reply_markup=admin_menu())
+    r = await m.answer(f"Ты принял приглашение — теперь ты администратор "
+                       f"«{venue}».\nЗапросы на визит будут приходить сюда.",
+                       reply_markup=admin_menu())
+    asyncio.create_task(_autodelete(r, 1200))
     try:
-        await m.bot.send_message(invited_by,
-                                 f"✅ {who} принял приглашение и стал "
-                                 f"администратором «{venue}».")
+        r = await m.bot.send_message(invited_by,
+                                     f"✅ {who} принял приглашение и стал "
+                                     f"администратором «{venue}».")
+        _track(invited_by, "settings", r.message_id)
+        asyncio.create_task(_autodelete(r, 1200))
     except Exception:
         pass
 
@@ -520,6 +523,7 @@ async def callback_admin_invite(c: types.CallbackQuery):
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="← Назад", callback_data=f"admlist:{int(c.data.removeprefix('adminv:'))}")]]))
+    _track(c.message.chat.id, "settings", c.message.message_id)
     await c.answer("Приглашение отправлено — перешли ссылку админу.")
 
 
