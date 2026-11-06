@@ -129,16 +129,14 @@ class Device:
     # ---------- apps ----------
 
     def wake_and_unlock(self) -> None:
-        self._adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
-        time.sleep(1)
+        cmds = ["input keyevent KEYCODE_WAKEUP", "sleep 1"]
         if self.pin:
             # Swipe up to reveal the PIN field, type it, confirm.
-            self._adb("shell", "input", "swipe", "540", "1800", "540", "600")
-            time.sleep(1)
-            self._adb("shell", "input", "text", self.pin)
-            self._adb("shell", "input", "keyevent", "66")  # ENTER
-            time.sleep(1)
-        self._adb("shell", "wm", "dismiss-keyguard")
+            cmds += ["input swipe 540 1800 540 600", "sleep 1",
+                     f"input text {self.pin}", "input keyevent 66",
+                     "sleep 1"]
+        cmds.append("wm dismiss-keyguard")
+        self._adb("shell", "; ".join(cmds))
 
     def open_allsports(self) -> None:
         self._adb(
