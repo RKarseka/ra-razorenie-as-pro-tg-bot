@@ -19,7 +19,7 @@ from aiogram.types import (
 )
 
 from .config import config
-from .device import Device, DeviceError
+from .device import Device, DeviceError, CheckinCancelled
 from .storage import PlaceStore
 
 log = logging.getLogger(__name__)
@@ -1002,7 +1002,12 @@ async def _remind_admin(bot, req_id: str) -> None:
 async def _run_checkin(m: types.Message, place, service: str | None = None,
                        req_id: str | None = None):
     if _checkin_lock.locked():
-        note = await m.answer("⏳ Уже идёт заезд на телефоне — этот запрос встанет в очередь.")
+        # A newer request supersedes the running visit: it aborts at
+        # the next wait point, cleans up and releases the lock.
+        device.cancel()
+        r = await m.answer("⏳ Прерываю текущий заезд — запускаю новый…",
+                           reply_markup=main_menu())
+        _track_more(m.chat.id, "req", r.message_id)
     async with _checkin_lock:
         await _checkin_locked(m, place, service, req_id)
 
@@ -1076,6 +1081,16 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
                          exclude={uid})
         if state == "expired" and req_id:
             asyncio.create_task(_remind_admin(m.bot, req_id))
+    except CheckinCancelled:
+        log.info("checkin: superseded by a newer request")
+        try:
+            await run_in_thread(device.stop_visit)
+        except Exception:
+            pass
+        await _set_progress("🚫 Заезд отменён новым запросом.")
+        r = await m.answer("🚫 Заезд отменён новым запросом.",
+                           reply_markup=main_menu())
+        _track_more(uid, "req", r.message_id)
     except Exception as e:
         log.exception("checkin failed")
         sp = device.last_spoof
@@ -1194,6 +1209,7 @@ async def cmd_stop(m: types.Message):
             pend["event"].set()
     store.close_open_requests()  # the chip must leave the keyboard at once;
     # the waiting coroutine still broadcasts the ⛔ cancellation to admins
+    device.cancel()  # abort a check-in running under the lock as well
     try:
         await run_in_thread(device.connect)
         await run_in_thread(device.stop_visit)
