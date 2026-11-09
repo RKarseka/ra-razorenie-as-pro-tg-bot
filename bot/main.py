@@ -24,16 +24,17 @@ async def set_commands(bot: Bot):
 
 async def on_startup(bot: Bot):
     url = config.webhook_base_url.rstrip("/") + config.webhook_path
-    await bot.set_webhook(url, allowed_updates=["message"])
+    await bot.set_webhook(url,
+                          allowed_updates=["message", "callback_query"])
     logging.info("webhook set to %s", url)
 
 
 async def greet_users(bot: Bot):
+    """Restore the reply keyboard after every (re)start and clean up
+    the previous boot's transient messages."""
     # In-memory pending state is lost on restart — close requests that
     # were still 'waiting' so they can't be restarted by stale buttons.
     store.close_open_requests()
-    """Restore the reply keyboard after every (re)start and clean up
-    the previous boot's transient messages."""
     for aid in store.all_admin_ids():
         try:
             await _untrack(bot, aid, "admreq")

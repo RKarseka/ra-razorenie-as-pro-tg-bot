@@ -5,6 +5,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from types import SimpleNamespace
 
 from aiogram import Router, types, F
 from aiogram.filters import Command, CommandObject
@@ -241,7 +242,7 @@ async def _accept_invite(m: types.Message, token: str) -> None:
         r = await m.bot.send_message(invited_by,
                                      f"✅ {who} принял приглашение и стал "
                                      f"администратором «{venue}».")
-        _track(invited_by, "settings", r.message_id)
+        _track_more(invited_by, "settings", r.message_id)
         asyncio.create_task(_autodelete(r, 1200))
     except Exception:
         pass
@@ -399,7 +400,10 @@ async def discover_venues(m: types.Message, uid: int, name: str,
             )
     except Exception as e:
         log.exception("venues_near failed")
-        await progress.edit_text(f"Не удалось открыть список: {e}")
+        try:
+            await progress.edit_text(f"Не удалось открыть список: {e}")
+        except Exception:
+            await m.answer(f"Не удалось открыть список: {e}")
 
 
 def _place_card(place) -> tuple[str, InlineKeyboardMarkup, int]:
@@ -523,7 +527,7 @@ async def callback_admin_invite(c: types.CallbackQuery):
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="← Назад", callback_data=f"admlist:{int(c.data.removeprefix('adminv:'))}")]]))
-    _track(c.message.chat.id, "settings", c.message.message_id)
+    _track_more(c.message.chat.id, "settings", c.message.message_id)
     await c.answer("Приглашение отправлено — перешли ссылку админу.")
 
 
@@ -856,12 +860,14 @@ async def _request_admin_ready(m, place, service, admins) -> None:
 
     wait_s = _secs_until_close()
     try:
-        await asyncio.wait_for(
-            _pending_req[req_id]["event"].wait(), timeout=wait_s or 1)
-        result = _pending_req[req_id]["result"]
-    except asyncio.TimeoutError:
-        result = "timeout"
-    pending = _pending_req.pop(req_id, None)
+        try:
+            await asyncio.wait_for(
+                _pending_req[req_id]["event"].wait(), timeout=wait_s or 1)
+            result = _pending_req[req_id]["result"]
+        except asyncio.TimeoutError:
+            result = "timeout"
+    finally:
+        _pending_req.pop(req_id, None)
     for aid in admins:
         try:
             await _untrack(m.bot, aid, "admreq")
@@ -1032,9 +1038,12 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
         await asyncio.wait_for(run_in_thread(device.connect), timeout=45)
         log.info("checkin: connected, starting checkin flow")
         await _set_progress(f"Spoofing to {place.name} ({place.lat}, {place.lon})…")
-        steps = await run_in_thread(
-            device.checkin, place.name, place.lat, place.lon,
-            on_step=on_step, service=service, jitter=store.jitter_on(),
+        steps = await asyncio.wait_for(
+            run_in_thread(
+                device.checkin, place.name, place.lat, place.lon,
+                on_step=on_step, service=service, jitter=store.jitter_on(),
+            ),
+            timeout=300,
         )
         log.info("checkin: flow finished")
         sp = device.last_spoof
@@ -1336,12 +1345,14 @@ async def menu_current_req(m: types.Message):
     await _drop(m)
     req = store.current_request()
     if not req:
-        return await m.answer("Активных запросов нет.",
-                              reply_markup=main_menu())
-    svc = f" · {req['service']}" if req["service"] else ""
-    await m.answer(
-        f"Текущий запрос: «{req['venue']}»{svc} — {req['state']}",
-        reply_markup=main_menu())
+        r = await m.answer("Активных запросов нет.",
+                           reply_markup=main_menu())
+    else:
+        svc = f" · {req['service']}" if req["service"] else ""
+        r = await m.answer(
+            f"Текущий запрос: «{req['venue']}»{svc} — {req['state']}",
+            reply_markup=main_menu())
+    _track_more(m.from_user.id, "req", r.message_id)
 
 
 @router.callback_query(F.data == "setclose")
@@ -1415,7 +1426,24 @@ async def _admin_restart(m: types.Message, req: dict) -> None:
                      f"«{place.name}» — запускаю.")
     store.set_request_state(req["id"], "ready")
     await _untrack(m.bot, m.chat.id, "admreq")
-    await _run_checkin(m, place, req["service"] or None, req["id"])
+    await _run_checkin(_OwnerChan(m.bot, req["owner"]), place,
+                       req["service"] or None, req["id"])
+
+
+class _OwnerChan:
+    """Message-like shim routing a check-in's progress to the OWNER's
+    chat — used by the admin-side restart where `m` is the admin's own
+    message, so answers must not land in the admin's chat."""
+
+    def __init__(self, bot, uid: int):
+        self.bot = bot
+        self.chat = SimpleNamespace(id=uid)
+
+    async def answer(self, text, **kw):
+        return await self.bot.send_message(self.chat.id, text, **kw)
+
+    async def answer_photo(self, photo, **kw):
+        return await self.bot.send_photo(self.chat.id, photo, **kw)
 
 @router.message(F.text)
 async def free_text(m: types.Message):

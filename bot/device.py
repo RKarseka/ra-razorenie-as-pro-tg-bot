@@ -133,7 +133,7 @@ class Device:
         if self.pin:
             # Swipe up to reveal the PIN field, type it, confirm.
             cmds += ["input swipe 540 1800 540 600", "sleep 1",
-                     f"input text {self.pin}", "input keyevent 66",
+                     f"input text '{self.pin}'", "input keyevent 66",
                      "sleep 1"]
         cmds.append("wm dismiss-keyguard")
         self._adb("shell", "; ".join(cmds))
