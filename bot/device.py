@@ -13,6 +13,7 @@ import math
 import random
 import re
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 
@@ -29,6 +30,10 @@ LOCATION_JITTER_MAX_M = 30
 
 class DeviceError(RuntimeError):
     pass
+
+
+class CheckinCancelled(DeviceError):
+    """Raised inside the check-in flow when a newer request supersedes it."""
 
 
 @dataclass
@@ -64,6 +69,15 @@ class Device:
         self.pin = pin
         # (req_lat, req_lon, act_lat, act_lon, offset_m) of the last spoof
         self.last_spoof: tuple | None = None
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        """Abort the in-flight check-in at its next wait point."""
+        self._cancel.set()
+
+    def _check_cancel(self) -> None:
+        if self._cancel.is_set():
+            raise CheckinCancelled("superseded by a newer request")
 
     # ---------- raw adb ----------
 
@@ -179,10 +193,12 @@ class Device:
         """
         import uiautomator2 as u2
 
+        self._cancel.clear()
         steps: list[Step] = []
 
         def step(name: str):
             log.info("step: %s", name)
+            self._check_cancel()
             if on_step:
                 on_step(name)
 
@@ -244,6 +260,7 @@ class Device:
             for _attempt in range(2):
                 deadline = time.time() + 20
                 while time.time() < deadline:
+                    self._check_cancel()
                     target = find_venue()
                     if target is not None:
                         break
@@ -287,6 +304,7 @@ class Device:
             svc = None
             deadline = time.time() + 15
             while time.time() < deadline:
+                self._check_cancel()
                 for el in d(clickable=True):
                     desc = el.info.get("contentDescription") or ""
                     if norm(desc.splitlines()[0] if desc else "") == norm(service):
@@ -312,6 +330,7 @@ class Device:
         sent = False
         deadline = time.time() + 10
         while time.time() < deadline:
+            self._check_cancel()
             if (d(descriptionMatches=waiting_re).exists
                     or d(textMatches=waiting_re).exists):
                 sent = True
@@ -346,6 +365,7 @@ class Device:
         outcome = "sent"
         deadline = time.time() + 200
         while time.time() < deadline:
+            self._check_cancel()
             if (d(descriptionMatches=expired_re).exists
                     or d(textMatches=expired_re).exists):
                 outcome = "expired"
