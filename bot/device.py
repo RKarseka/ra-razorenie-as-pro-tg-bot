@@ -243,15 +243,12 @@ class Device:
         seen: set[str] = set()
 
         def find_venue():
-            for el in d(clickable=True):
-                desc = el.info.get("contentDescription") or ""
-                title = norm(desc.splitlines()[0] if desc else "")
-                if not title:
-                    continue
-                seen.add(title)
-                if title == want:
-                    return el
-            return None
+            def match(title: str) -> bool:
+                n = norm(title)
+                if n:
+                    seen.add(n)
+                return n == want
+            return self._xml_find(d, match)
 
         # The venue list loads asynchronously after the location changes —
         # poll for a while before scrolling.
@@ -291,7 +288,7 @@ class Device:
                 pass
             time.sleep(3)
         if target is not None:
-            target.click()
+            d.click(*target)
         steps.append(Step("venue_selected", self.screenshot()))
         if target is None:
             listed = "\n".join(f"  - {t}" for t in sorted(seen)) or "  (пусто)"
@@ -301,22 +298,19 @@ class Device:
         if service is not None:
             step("select_service")
             # «Выбор активности»: strict title match on the saved service name.
+            want_svc = norm(service)
             svc = None
             deadline = time.time() + 15
             while time.time() < deadline:
                 self._check_cancel()
-                for el in d(clickable=True):
-                    desc = el.info.get("contentDescription") or ""
-                    if norm(desc.splitlines()[0] if desc else "") == norm(service):
-                        svc = el
-                        break
+                svc = self._xml_find(d, lambda t: norm(t) == want_svc)
                 if svc is not None:
                     break
                 time.sleep(1)
             steps.append(Step("service_selected", self.screenshot()))
             if svc is None:
                 raise DeviceError(f"service '{service}' not found")
-            svc.click()
+            d.click(*svc)
             time.sleep(3)
 
         step("wait_for_confirmation")
@@ -382,6 +376,33 @@ class Device:
         step("close_app")
         self.close_allsports()
         return steps
+
+    @staticmethod
+    def _xml_find(d, matcher):
+        """Dump the hierarchy ONCE and return (x, y) of the first clickable
+        node whose content-desc/text first line passes matcher(title).
+
+        Way faster than iterating d(clickable=True) — every el.info is an
+        HTTP round trip to the phone, while this is a single dump."""
+        import xml.etree.ElementTree as ET
+
+        try:
+            root = ET.fromstring(d.dump_hierarchy())
+        except ET.ParseError:
+            return None
+        for node in root.iter("node"):
+            if node.get("clickable") != "true":
+                continue
+            desc = node.get("content-desc") or node.get("text") or ""
+            title = desc.splitlines()[0].strip() if desc else ""
+            if not title or not matcher(title):
+                continue
+            b = re.findall(r"\d+", node.get("bounds") or "")
+            if len(b) != 4:
+                continue
+            l, t, r, bo = (int(v) for v in b)
+            return (l + r) // 2, (t + bo) // 2
+        return None
 
     # ---------- venue discovery ----------
 
