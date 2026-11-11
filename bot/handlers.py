@@ -58,6 +58,17 @@ def _service_minutes(service: str | None) -> int:
         if mm:
             return int(mm.group(1))
     return 60
+
+
+def _parse_hours(text: str) -> int | None:
+    """'1.5'/'2'/'1,5' → hours; '45 мин' → minutes. Returns minutes."""
+    s = text.strip().lower().replace(",", ".")
+    try:
+        if s.endswith("мин"):
+            return int(round(float(s[:-3].strip())))
+        return int(round(float(s) * 60))
+    except ValueError:
+        return None
 # Geocoding candidates offered to each user.
 _pending_geo: dict[int, list] = {}
 # Live visit requests awaiting the admin decision, keyed by request id.
@@ -548,14 +559,14 @@ async def callback_balance_op(c: types.CallbackQuery):
     if op not in _BAL_OPS:
         return await c.answer()
     rows = [[InlineKeyboardButton(
-        text=f"{p} мин", callback_data=f"baldo:{idx_s}:{op}:{p}")]
-        for p in (30, 60, 90, 120)]
-    rows.append([InlineKeyboardButton(text="⌨️ Своя сумма",
+        text=f"{label} ч", callback_data=f"baldo:{idx_s}:{op}:{mins}")]
+        for label, mins in (("0.5", 30), ("1", 60), ("1.5", 90), ("2", 120))]
+    rows.append([InlineKeyboardButton(text="⌨️ Своё значение",
                                       callback_data=f"balcust:{idx_s}:{op}")])
     rows.append([InlineKeyboardButton(text="← Назад",
                                       callback_data=f"bal:{idx_s}")])
     await c.message.edit_text(
-        f"{_BAL_OPS[op]} — «{place.name}».\nСколько минут?",
+        f"{_BAL_OPS[op]} — «{place.name}».\nСколько часов?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await c.answer()
 
@@ -591,7 +602,7 @@ async def callback_balance_custom(c: types.CallbackQuery):
     _awaiting_balance[c.from_user.id] = (place.name, op)
     await c.message.edit_text(
         f"{_BAL_OPS.get(op, 'Сумма')} — «{place.name}».\n"
-        "Напиши сумму в минутах (например, 45):")
+        "Напиши количество часов (например, 1.5 или 2):")
     await c.answer()
 
 
@@ -1685,15 +1696,12 @@ async def free_text(m: types.Message):
     uid = m.from_user.id
     if uid in _awaiting_balance and m.from_user.id in config.allowed_users:
         venue, op = _awaiting_balance.pop(uid)
-        try:
-            minutes = int(m.text.strip())
-            if minutes <= 0 and op != "set":
-                raise ValueError
-        except ValueError:
+        minutes = _parse_hours(m.text)
+        if minutes is None or (minutes <= 0 and op != "set"):
             _awaiting_balance[uid] = (venue, op)
             return await m.answer(
-                "Нужна целая сумма в минутах — например, 45. "
-                "Попробуй ещё раз:")
+                "Нужно число в часах — например, 1.5. "
+                "Можно и в минутах с суффиксом: 45 мин.")
         text = await _apply_balance(m.bot, uid, venue, op, minutes)
         return await m.answer(text, reply_markup=main_menu())
     if uid in _awaiting_name_for and m.from_user.id in config.allowed_users:
