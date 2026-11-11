@@ -474,6 +474,8 @@ def _balance_card(place) -> tuple[str, InlineKeyboardMarkup]:
                               callback_data=f"balop:{idx}:sub")],
         [InlineKeyboardButton(text="✏️ Установить значение",
                               callback_data=f"balop:{idx}:set")],
+        [InlineKeyboardButton(text="📢 Сообщить баланс админам",
+                              callback_data=f"baltell:{idx}")],
         [InlineKeyboardButton(
             text="🔕 Выключить учёт" if place.balance_track
             else "🔔 Включить учёт",
@@ -557,6 +559,28 @@ async def callback_balance_toggle(c: types.CallbackQuery):
     await c.message.edit_text(text, reply_markup=kb)
     await c.answer(
         "Учёт включён" if place.balance_track else "Учёт выключен")
+
+
+@router.callback_query(F.data.startswith("baltell:"))
+async def callback_balance_tell(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    place = _resolve_place(c, c.data.removeprefix("baltell:"))
+    if place is None:
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    place = store.get(place.name) or place
+    if not store.admins_for(place.name):
+        return await c.answer("У объекта нет администраторов.",
+                              show_alert=True)
+    await _broadcast(
+        c.bot, place.name, c.from_user.id,
+        f"⏱ Текущий баланс «{place.name}»: {_fmt_min(place.balance_min)}.",
+        exclude={c.from_user.id})
+    text, kb = _balance_card(place)
+    await c.message.edit_text(f"{text}\n\n📢 Отправлено админам.",
+                              reply_markup=kb)
+    await c.answer()
 
 
 _BAL_OPS = {"add": "Пополнение", "sub": "Списание", "set": "Установка баланса"}
