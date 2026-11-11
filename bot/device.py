@@ -228,16 +228,10 @@ class Device:
             )
 
         step("new_checkin_tab")
-        self._open_geo_list(d)
-        time.sleep(3)
-        steps.append(Step("venue_list", self.screenshot()))
 
-        step("select_venue")
         # Venue desc is "Название\nАдрес". Strict match only: the row's
         # normalized title must equal the saved name — no fuzzy fallback,
-        # so a near-miss can never tap the wrong venue. On a miss, scroll
-        # back to the top and retry the whole sweep once (the list may
-        # have loaded late or the first pass raced the refresh).
+        # so a near-miss can never tap the wrong venue.
         norm = self._norm
         want = norm(place_name)
         seen: set[str] = set()
@@ -250,43 +244,57 @@ class Device:
                 return n == want
             return self._xml_find(d, match)
 
-        # The venue list loads asynchronously after the location changes —
-        # poll for a while before scrolling.
+        # «Объектов поблизости не найдено» — the app never picked up the
+        # spoofed fix; waiting won't help, only an app restart does.
+        empty_re = "(?i).*объектов поблизости не найдено.*"
+
+        def list_empty() -> bool:
+            return (d(descriptionMatches=empty_re).exists
+                    or d(textMatches=empty_re).exists)
+
         target = None
-        for _entry in range(2):
-            for _attempt in range(2):
-                deadline = time.time() + 20
-                while time.time() < deadline:
-                    self._check_cancel()
-                    target = find_venue()
-                    if target is not None:
-                        break
-                    time.sleep(1)
-                if target is None and d(scrollable=True).exists:
-                    for _ in range(6):
-                        before = d.dump_hierarchy()
-                        d(scrollable=True).scroll.forward()
-                        time.sleep(1)
-                        target = find_venue()
-                        if target is not None or d.dump_hierarchy() == before:
-                            break
-                if target is not None:
-                    break
-                # Back to the top before the second sweep.
-                if d(scrollable=True).exists:
-                    d(scrollable=True).scroll.toBeginning(max_swipes=10)
-                    time.sleep(1)
-            if target is not None or _entry == 1:
-                break
-            # The list may never have loaded — back out and re-enter
-            # the geo list once before giving up.
-            d.press("back")
-            time.sleep(2)
+        for app_try in range(3):
+            if app_try:
+                log.info("checkin: geo list empty/missed — restarting "
+                         "Allsports (%d/3)", app_try + 1)
+                self.close_allsports()
+                time.sleep(2)
+                self.set_location(lat, lon, jitter=jitter)
+                time.sleep(3)
+                self.open_allsports()
+                time.sleep(6)
             try:
                 self._open_geo_list(d)
             except DeviceError:
-                pass
+                if app_try < 2:
+                    continue
+                raise
             time.sleep(3)
+            steps.append(Step("venue_list", self.screenshot()))
+
+            step("select_venue")
+            # The list loads asynchronously after the location changes —
+            # poll for a while, then scroll to the bottom.
+            deadline = time.time() + 20
+            while target is None and time.time() < deadline and not list_empty():
+                self._check_cancel()
+                target = find_venue()
+                if target is None:
+                    time.sleep(1)
+            for _ in range(6):
+                if (target is not None or list_empty()
+                        or not d(scrollable=True).exists):
+                    break
+                before = d.dump_hierarchy()
+                d(scrollable=True).scroll.forward()
+                time.sleep(1)
+                self._check_cancel()
+                target = find_venue()
+                if d.dump_hierarchy() == before:
+                    break
+            if target is not None:
+                break
+            # Miss or an empty list — restart the app on the next pass.
         if target is not None:
             d.click(*target)
         steps.append(Step("venue_selected", self.screenshot()))
