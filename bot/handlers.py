@@ -282,7 +282,26 @@ def _track_more(uid: int, kind: str, *ids: int) -> None:
 def wrap_sends(bot) -> None:
     """Auto-track every message the bot sends under 'auto' — send sites
     can't forget to mark a transient message anymore. Explicit _track
-    calls move ids under their own kind (and out of 'auto')."""
+    calls move ids under their own kind (and out of 'auto').
+
+    m.answer() doesn't call bot.send_message — it builds a SendMessage
+    method object executed through bot.session.make_request, so the
+    reliable interception point is the session request middleware."""
+    async def _track_outgoing(make_request, bot, method):
+        response = await make_request(bot, method)
+        try:
+            result = getattr(response, "result", None)
+            if isinstance(result, types.Message):
+                _track_more(result.chat.id, "auto", result.message_id)
+        except Exception:
+            pass
+        return response
+
+    mw_manager = getattr(bot.session, "middleware", None)
+    if mw_manager is not None and hasattr(mw_manager, "register"):
+        mw_manager.register(_track_outgoing)
+        return
+    # Fallback for aiogram versions without session middleware.
     for name in ("send_message", "send_photo", "send_document",
                  "send_video", "send_animation", "send_audio", "send_voice"):
         orig = getattr(bot, name, None)
