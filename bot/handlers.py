@@ -142,9 +142,15 @@ async def _display_name(bot, tg_id: int) -> str:
 
 async def _broadcast(bot, venue: str, owner_uid: int, text: str,
                      exclude: set[int] | None = None,
-                     reply_markup=None) -> list[types.Message]:
-    """Log an event to the request owner AND every venue admin at once."""
-    targets = ({owner_uid} | set(store.admins_for(venue))) - (exclude or set())
+                     reply_markup=None,
+                     notify_admins: bool = True) -> list[types.Message]:
+    """Log an event to the request owner AND every venue admin at once.
+
+    notify_admins=False keeps the copy owner-only — for progress noise
+    admins should never see."""
+    targets = {owner_uid} | (
+        set(store.admins_for(venue)) if notify_admins else set())
+    targets -= (exclude or set())
     sent = []
     for uid in targets:
         try:
@@ -1076,11 +1082,13 @@ async def _request_admin_ready(m, place, service, admins) -> None:
             _track_more(uid, "req", rr.message_id)
             await _broadcast(m.bot, place.name, uid,
                              f"✅ Администратор готов — запускаю "
-                             f"«{place.name}»{svc}.", exclude={uid})
+                             f"«{place.name}»{svc}.", exclude={uid},
+                             notify_admins=False)
         else:
             await _broadcast(m.bot, place.name, uid,
                              f"▶️ Запуск без подтверждения администратора "
-                             f"— «{place.name}»{svc}.", exclude={uid})
+                             f"— «{place.name}»{svc}.", exclude={uid},
+                             notify_admins=False)
         await _run_checkin(m, place, service, req_id)
         return
 
@@ -1105,7 +1113,8 @@ async def _request_admin_ready(m, place, service, admins) -> None:
         _track_more(uid, "req", rr.message_id)
         await _broadcast(m.bot, place.name, uid,
                          f"⏱ Запрос в «{place.name}»{svc} истёк "
-                         "без подтверждения.", exclude={uid})
+                         "без подтверждения.", exclude={uid},
+                         notify_admins=False)
 
 
 @router.callback_query(F.data.startswith("reqok:"))
@@ -1135,7 +1144,8 @@ async def callback_req_decline(c: types.CallbackQuery):
     await c.message.edit_text(c.message.text + "\n\n✋ Ты отклонил.")
     await _broadcast(c.bot, req["venue"], req["owner"],
                      f"✋ Администратор {await _display_name(c.bot, c.from_user.id)} "
-                     f"не может принять «{req['venue']}».")
+                     f"не может принять «{req['venue']}».",
+                     notify_admins=False)
     if pend["declined"] >= set(store.admins_for(req["venue"])):
         pend["result"] = "declined"
         pend["event"].set()
@@ -1317,12 +1327,13 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
         # Persistent result doubles as the keyboard anchor.
         rr = await m.answer(final, reply_markup=main_menu())
         _track_more(uid, "req", rr.message_id)
-        # The admin copy drops the geo internals; on expired/failed it
-        # carries a one-tap retry button.
-        await _broadcast(m.bot, place.name, uid,
-                         f"{place.name}: {final.splitlines()[0]}",
-                         exclude={uid},
-                         reply_markup=_retry_kb(req_id, state))
+        # The admin copy drops the geo internals and goes out only for
+        # the outcomes admins care about (success / expired → retry).
+        if state in ("confirmed", "expired"):
+            await _broadcast(m.bot, place.name, uid,
+                             f"{place.name}: {final.splitlines()[0]}",
+                             exclude={uid},
+                             reply_markup=_retry_kb(req_id, state))
         if state == "expired" and req_id:
             asyncio.create_task(_remind_admin(m.bot, req_id))
     except CheckinCancelled:
@@ -1349,7 +1360,8 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
             store.set_request_state(req_id, "failed")
             asyncio.create_task(_remind_admin(m.bot, req_id))
         await _broadcast(m.bot, place.name, uid,
-                         f"{place.name}: ошибка — {e}", exclude={uid},
+                         f"⚠️ «{place.name}»: возникла ошибка — "
+                         "запрос можно повторить.", exclude={uid},
                          reply_markup=_retry_kb(req_id, "failed"))
         try:
             shot = await run_in_thread(device.screenshot)
@@ -1684,7 +1696,8 @@ async def _admin_restart(m: types.Message, req: dict) -> None:
     await _broadcast(m.bot, place.name, req["owner"],
                      f"🔁 Администратор {await _display_name(m.bot, m.chat.id)} "
                      f"просит повторить "
-                     f"«{place.name}» — запускаю.")
+                     f"«{place.name}» — запускаю.",
+                     notify_admins=False)
     store.set_request_state(req["id"], "ready")
     await _untrack(m.bot, m.chat.id, "admreq")
     await _run_checkin(_OwnerChan(m.bot, req["owner"]), place,
