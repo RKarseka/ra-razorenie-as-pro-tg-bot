@@ -14,6 +14,8 @@ class Place:
     lon: float
     address: str = ""
     services: list[str] = field(default_factory=list)
+    balance_min: int = 0
+    balance_track: bool = False
 
 
 class PlaceStore:
@@ -54,8 +56,17 @@ class PlaceStore:
             "  state TEXT NOT NULL,"
             "  updated REAL NOT NULL)"
         )
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS balance_log("
+            "  venue TEXT NOT NULL COLLATE NOCASE,"
+            "  delta INTEGER NOT NULL,"
+            "  reason TEXT NOT NULL DEFAULT '',"
+            "  ts REAL NOT NULL)"
+        )
         for col in ("address TEXT NOT NULL DEFAULT ''",
-                    "services TEXT NOT NULL DEFAULT '[]'"):
+                    "services TEXT NOT NULL DEFAULT '[]'",
+                    "balance_min INTEGER NOT NULL DEFAULT 0",
+                    "balance_track INTEGER NOT NULL DEFAULT 0"):
             try:
                 self.db.execute(f"ALTER TABLE places ADD COLUMN {col}")
             except sqlite3.OperationalError:
@@ -66,10 +77,13 @@ class PlaceStore:
             services: list[str] | None = None) -> None:
         prev = self.get(name)
         svc = services if services is not None else (prev.services if prev else [])
+        bal_min = prev.balance_min if prev else 0
+        bal_trk = prev.balance_track if prev else False
         self.db.execute(
-            "INSERT OR REPLACE INTO places(name, lat, lon, address, services) "
-            "VALUES(?,?,?,?,?)",
-            (name, lat, lon, address, json.dumps(svc, ensure_ascii=False)),
+            "INSERT OR REPLACE INTO places(name, lat, lon, address, services, "
+            "balance_min, balance_track) VALUES(?,?,?,?,?,?,?)",
+            (name, lat, lon, address, json.dumps(svc, ensure_ascii=False),
+             bal_min, 1 if bal_trk else 0),
         )
         self.db.commit()
 
@@ -80,11 +94,13 @@ class PlaceStore:
 
     @staticmethod
     def _row(r) -> Place:
-        return Place(r[0], r[1], r[2], r[3], json.loads(r[4] or "[]"))
+        return Place(r[0], r[1], r[2], r[3], json.loads(r[4] or "[]"),
+                     r[5], bool(r[6]))
 
     def get(self, name: str) -> Place | None:
         row = self.db.execute(
-            "SELECT name, lat, lon, address, services FROM places WHERE name=?",
+            "SELECT name, lat, lon, address, services, balance_min, "
+            "balance_track FROM places WHERE name=?",
             (name,),
         ).fetchone()
         return self._row(row) if row else None
@@ -93,9 +109,43 @@ class PlaceStore:
         return [
             self._row(r)
             for r in self.db.execute(
-                "SELECT name, lat, lon, address, services FROM places ORDER BY name"
+                "SELECT name, lat, lon, address, services, balance_min, "
+                "balance_track FROM places ORDER BY name"
             )
         ]
+
+    # ---------- hour balance ----------
+
+    def set_balance_track(self, name: str, on: bool) -> None:
+        self.db.execute(
+            "UPDATE places SET balance_track=? WHERE name=?",
+            (1 if on else 0, name))
+        self.db.commit()
+
+    def balance_of(self, name: str) -> int:
+        r = self.db.execute(
+            "SELECT balance_min FROM places WHERE name=?", (name,)).fetchone()
+        return r[0] if r else 0
+
+    def add_balance(self, name: str, delta_min: int) -> int:
+        self.db.execute(
+            "UPDATE places SET balance_min=balance_min+? WHERE name=?",
+            (delta_min, name))
+        self.db.commit()
+        return self.balance_of(name)
+
+    def set_balance(self, name: str, minutes: int) -> None:
+        self.db.execute(
+            "UPDATE places SET balance_min=? WHERE name=?",
+            (minutes, name))
+        self.db.commit()
+
+    def log_balance(self, venue: str, delta_min: int, reason: str) -> None:
+        import time
+        self.db.execute(
+            "INSERT INTO balance_log(venue, delta, reason, ts) "
+            "VALUES(?,?,?,?)", (venue, delta_min, reason, time.time()))
+        self.db.commit()
 
     def get_setting(self, key: str, default: str = "") -> str:
         row = self.db.execute(

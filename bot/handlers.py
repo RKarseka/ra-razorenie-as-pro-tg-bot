@@ -40,6 +40,24 @@ _pending_svc_pick: dict[int, dict] = {}
 # Users asked to type a venue name (from «Добавить объект»).
 _awaiting_place_name: set[int] = set()
 _awaiting_name_for: dict[int, int] = {}
+_awaiting_balance: dict[int, tuple[str, str]] = {}  # uid -> (venue, op)
+
+
+def _fmt_min(minutes: int) -> str:
+    sign = "−" if minutes < 0 else ""
+    h, mm = divmod(abs(minutes), 60)
+    if h and mm:
+        return f"{sign}{h} ч {mm} мин"
+    return f"{sign}{h} ч" if h else f"{sign}{mm} мин"
+
+
+def _service_minutes(service: str | None) -> int:
+    if service:
+        import re as _re
+        mm = _re.search(r"(\d+)\s*мин", service)
+        if mm:
+            return int(mm.group(1))
+    return 60
 # Geocoding candidates offered to each user.
 _pending_geo: dict[int, list] = {}
 # Live visit requests awaiting the admin decision, keyed by request id.
@@ -412,16 +430,169 @@ def _place_card(place) -> tuple[str, InlineKeyboardMarkup, int]:
     places = store.list()
     idx = next((i for i, p in enumerate(places) if p.name == place.name), -1)
     services = "\n".join(f"  • {x}" for x in place.services) or "  —"
+    bal = (f"💳 Баланс: {_fmt_min(place.balance_min)}\n"
+           if place.balance_track else "")
     text = (f"{place.name}\nАдрес: {place.address or '—'}\n"
-            f"Координаты: {place.lat}, {place.lon}\nУслуги:\n{services}")
+            f"Координаты: {place.lat}, {place.lon}\n{bal}Услуги:\n{services}")
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Услуги", callback_data=f"svcedit:{idx}"),
          InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del:{idx}")],
         [InlineKeyboardButton(text="🏃 Запросить визит", callback_data=f"vis:{idx}")],
-        [InlineKeyboardButton(text="👥 Администраторы", callback_data=f"admlist:{idx}")],
+        [InlineKeyboardButton(text="⏱ Баланс часов", callback_data=f"bal:{idx}"),
+         InlineKeyboardButton(text="👥 Администраторы", callback_data=f"admlist:{idx}")],
         [InlineKeyboardButton(text="← Назад к объектам", callback_data="plcback")],
     ])
     return text, kb, idx
+
+
+def _balance_card(place) -> tuple[str, InlineKeyboardMarkup]:
+    places = store.list()
+    idx = next((i for i, p in enumerate(places) if p.name == place.name), -1)
+    text = (f"⏱ Баланс «{place.name}»: {_fmt_min(place.balance_min)}\n"
+            f"Учёт часов: {'вкл' if place.balance_track else 'выкл'}")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Пополнить",
+                              callback_data=f"balop:{idx}:add"),
+         InlineKeyboardButton(text="➖ Списать",
+                              callback_data=f"balop:{idx}:sub")],
+        [InlineKeyboardButton(text="✏️ Установить значение",
+                              callback_data=f"balop:{idx}:set")],
+        [InlineKeyboardButton(
+            text="🔕 Выключить учёт" if place.balance_track
+            else "🔔 Включить учёт",
+            callback_data=f"baltoggle:{idx}")],
+        [InlineKeyboardButton(text="← Назад к объекту",
+                              callback_data=f"plc:{idx}")],
+    ])
+    return text, kb
+
+
+def _resolve_place(c: types.CallbackQuery, prefix: str):
+    try:
+        return _pending_places[c.from_user.id][int(prefix)]
+    except (KeyError, IndexError, ValueError):
+        return None
+
+
+async def _apply_balance(bot, uid: int, venue: str, op: str,
+                         minutes: int) -> str:
+    place = store.get(venue)
+    if not place:
+        return f"Объект «{venue}» не найден."
+    if not place.balance_track:
+        return f"Учёт часов для «{venue}» выключен — включи его в «Баланс часов»."
+    if op == "add":
+        nb = store.add_balance(venue, minutes)
+        store.log_balance(venue, minutes, "manual")
+        return f"💳 +{_fmt_min(minutes)} → баланс «{venue}»: {_fmt_min(nb)}"
+    if op == "sub":
+        nb = store.add_balance(venue, -minutes)
+        store.log_balance(venue, -minutes, "manual")
+        await _broadcast(
+            bot, venue, uid,
+            f"⏱ Списание по «{venue}»: −{_fmt_min(minutes)}. "
+            f"Остаток: {_fmt_min(nb)}.",
+            exclude={uid})
+        return (f"💳 −{_fmt_min(minutes)} → баланс «{venue}»: "
+                f"{_fmt_min(nb)}\nАдминистраторы уведомлены.")
+    prev = place.balance_min
+    store.set_balance(venue, minutes)
+    store.log_balance(venue, minutes - prev, "correct")
+    return f"💳 Баланс «{venue}» установлен: {_fmt_min(minutes)}"
+
+
+@router.callback_query(F.data.startswith("bal:"))
+async def callback_balance(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    place = _resolve_place(c, c.data.removeprefix("bal:"))
+    if place is None:
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    place = store.get(place.name) or place
+    text, kb = _balance_card(place)
+    await c.message.edit_text(text, reply_markup=kb)
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("baltoggle:"))
+async def callback_balance_toggle(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    place = _resolve_place(c, c.data.removeprefix("baltoggle:"))
+    if place is None:
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    cur = store.get(place.name) or place
+    store.set_balance_track(place.name, not cur.balance_track)
+    place = store.get(place.name) or cur
+    text, kb = _balance_card(place)
+    await c.message.edit_text(text, reply_markup=kb)
+    await c.answer(
+        "Учёт включён" if place.balance_track else "Учёт выключен")
+
+
+_BAL_OPS = {"add": "Пополнение", "sub": "Списание", "set": "Установка баланса"}
+
+
+@router.callback_query(F.data.startswith("balop:"))
+async def callback_balance_op(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    try:
+        _p, idx_s, op = c.data.split(":")
+        place = _pending_places[c.from_user.id][int(idx_s)]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    if op not in _BAL_OPS:
+        return await c.answer()
+    rows = [[InlineKeyboardButton(
+        text=f"{p} мин", callback_data=f"baldo:{idx_s}:{op}:{p}")]
+        for p in (30, 60, 90, 120)]
+    rows.append([InlineKeyboardButton(text="⌨️ Своя сумма",
+                                      callback_data=f"balcust:{idx_s}:{op}")])
+    rows.append([InlineKeyboardButton(text="← Назад",
+                                      callback_data=f"bal:{idx_s}")])
+    await c.message.edit_text(
+        f"{_BAL_OPS[op]} — «{place.name}».\nСколько минут?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("baldo:"))
+async def callback_balance_do(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    try:
+        _p, idx_s, op, min_s = c.data.split(":")
+        place = _pending_places[c.from_user.id][int(idx_s)]
+        minutes = int(min_s)
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Данные устарели — открой «Объекты» заново.",
+                              show_alert=True)
+    text = await _apply_balance(c.bot, c.from_user.id, place.name, op, minutes)
+    place = store.get(place.name) or place
+    card, kb = _balance_card(place)
+    await c.message.edit_text(f"{text}\n\n{card}", reply_markup=kb)
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("balcust:"))
+async def callback_balance_custom(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    try:
+        _p, idx_s, op = c.data.split(":")
+        place = _pending_places[c.from_user.id][int(idx_s)]
+    except (KeyError, IndexError, ValueError):
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    _awaiting_balance[c.from_user.id] = (place.name, op)
+    await c.message.edit_text(
+        f"{_BAL_OPS.get(op, 'Сумма')} — «{place.name}».\n"
+        "Напиши сумму в минутах (например, 45):")
+    await c.answer()
 
 
 @router.callback_query(F.data.startswith("plc:"))
@@ -1102,6 +1273,11 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
         if outcome == "outcome_confirmed":
             final = f"✅ Визит подтверждён администратором.\n{geo}"
             state = "confirmed"
+            if place.balance_track:
+                mins = _service_minutes(service)
+                nb = store.add_balance(place.name, mins)
+                store.log_balance(place.name, mins, "visit")
+                final += f"\n💳 +{_fmt_min(mins)} → баланс: {_fmt_min(nb)}"
         elif outcome == "outcome_expired":
             final = ("⏱ Время ожидания истекло — администратор не успел "
                      f"подтвердить. Попробуй ещё раз.\n{geo}")
@@ -1507,6 +1683,19 @@ class _OwnerChan:
 @router.message(F.text)
 async def free_text(m: types.Message):
     uid = m.from_user.id
+    if uid in _awaiting_balance and m.from_user.id in config.allowed_users:
+        venue, op = _awaiting_balance.pop(uid)
+        try:
+            minutes = int(m.text.strip())
+            if minutes <= 0 and op != "set":
+                raise ValueError
+        except ValueError:
+            _awaiting_balance[uid] = (venue, op)
+            return await m.answer(
+                "Нужна целая сумма в минутах — например, 45. "
+                "Попробуй ещё раз:")
+        text = await _apply_balance(m.bot, uid, venue, op, minutes)
+        return await m.answer(text, reply_markup=main_menu())
     if uid in _awaiting_name_for and m.from_user.id in config.allowed_users:
         target = _awaiting_name_for.pop(uid)
         store.set_name(target, m.text.strip()[:64])
