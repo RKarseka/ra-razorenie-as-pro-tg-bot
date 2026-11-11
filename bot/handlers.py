@@ -1497,6 +1497,12 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
             _track(uid, "checkin", progress.message_id, ph.message_id)
         except Exception:
             _track(uid, "checkin", progress.message_id)
+        # Drop the spoof, close the app and lock the screen — the failed
+        # run used to leave all three on.
+        try:
+            await run_in_thread(device.cleanup)
+        except Exception:
+            pass
 
 
 @router.message(F.text == BTN_CHECKIN)

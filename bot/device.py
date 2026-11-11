@@ -180,10 +180,26 @@ class Device:
     def close_allsports(self) -> None:
         self._adb("shell", "am", "force-stop", self.allsports_pkg)
 
+    def lock_screen(self) -> None:
+        """Screen off + lock — keyguard comes up next wake."""
+        try:
+            self._adb("shell", "input keyevent KEYCODE_SLEEP", timeout=10)
+        except Exception:
+            log.exception("lock_screen failed")
+
     def stop_visit(self) -> None:
         """Cancel the spoof and close Allsports."""
         self.clear_location()
         self.close_allsports()
+
+    def cleanup(self) -> None:
+        """End-of-flow teardown: drop the spoof, close the app and lock
+        the screen. Never raises — runs at every exit path."""
+        try:
+            self.stop_visit()
+        except Exception:
+            log.exception("cleanup failed")
+        self.lock_screen()
 
     def screenshot(self) -> bytes:
         r = subprocess.run(
@@ -329,7 +345,7 @@ class Device:
             if already_visited():
                 steps.append(Step("outcome_confirmed", self.screenshot()))
                 step("close_app")
-                self.close_allsports()
+                self.cleanup()
                 return steps
             listed = "\n".join(f"  - {t}" for t in sorted(seen)) or "  (пусто)"
             raise DeviceError(
@@ -414,7 +430,7 @@ class Device:
         step("result")
         steps.append(Step("result", self.screenshot()))
         step("close_app")
-        self.close_allsports()
+        self.cleanup()
         return steps
 
     @staticmethod
@@ -491,37 +507,41 @@ class Device:
         time.sleep(6)
 
         d = u2.connect(self.serial)
-        self._open_geo_list(d)
-        time.sleep(2)
+        try:
+            self._open_geo_list(d)
+            time.sleep(2)
 
-        names: list[tuple[str, str]] = []
-        seen = set()
+            names: list[tuple[str, str]] = []
+            seen = set()
 
-        def collect() -> None:
-            for el in d(clickable=True):
-                desc = (el.info.get("contentDescription") or "").splitlines()
-                if len(desc) < 2:
-                    continue
-                second = desc[1].strip().lower()
-                # Venue rows: title + address ("г. Минск, ...") or distance.
-                if second.startswith("г.") or "м от вас" in second or "км от вас" in second:
-                    title = desc[0].strip()
-                    if title and title not in seen:
-                        seen.add(title)
-                        names.append((title, desc[1].strip()))
+            def collect() -> None:
+                for el in d(clickable=True):
+                    desc = (el.info.get("contentDescription") or "").splitlines()
+                    if len(desc) < 2:
+                        continue
+                    second = desc[1].strip().lower()
+                    # Venue rows: title + address ("г. Минск, ...") or distance.
+                    if (second.startswith("г.") or "м от вас" in second
+                            or "км от вас" in second):
+                        title = desc[0].strip()
+                        if title and title not in seen:
+                            seen.add(title)
+                            names.append((title, desc[1].strip()))
 
-        collect()
-        shot = self.screenshot()
-        if d(scrollable=True).exists:
-            for _ in range(6):
-                before = d.dump_hierarchy()
-                d(scrollable=True).scroll.forward()
-                time.sleep(1)
-                if d.dump_hierarchy() == before:
-                    break
-                collect()
+            collect()
+            shot = self.screenshot()
+            if d(scrollable=True).exists:
+                for _ in range(6):
+                    before = d.dump_hierarchy()
+                    d(scrollable=True).scroll.forward()
+                    time.sleep(1)
+                    if d.dump_hierarchy() == before:
+                        break
+                    collect()
 
-        return names, shot
+            return names, shot
+        finally:
+            self.cleanup()
 
     def services_of_venue(self, place_name: str, lat: float, lon: float,
                             jitter: bool = True) -> list[str]:
@@ -536,44 +556,48 @@ class Device:
         time.sleep(6)
 
         d = u2.connect(self.serial)
-        self._open_geo_list(d)
-        time.sleep(2)
+        try:
+            self._open_geo_list(d)
+            time.sleep(2)
 
-        norm = self._norm
-        target = None
-        deadline = time.time() + 20
-        while time.time() < deadline:
-            for el in d(clickable=True):
-                desc = el.info.get("contentDescription") or ""
-                if norm(desc.splitlines()[0] if desc else "") == norm(place_name):
-                    target = el
+            norm = self._norm
+            target = None
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                for el in d(clickable=True):
+                    desc = el.info.get("contentDescription") or ""
+                    if norm(desc.splitlines()[0] if desc else "") == norm(place_name):
+                        target = el
+                        break
+                if target is not None:
                     break
-            if target is not None:
-                break
-            time.sleep(1)
-        if target is None:
-            raise DeviceError(f"venue '{place_name}' not found in geo list")
-        target.click()
-        time.sleep(4)
+                time.sleep(1)
+            if target is None:
+                raise DeviceError(
+                    f"venue '{place_name}' not found in geo list")
+            target.click()
+            time.sleep(4)
 
-        skip = {
-            "объекты", "новый визит", "профиль", "назад",
-            "вход по локации", "выбор активности",
-        }
-        services: list[str] = []
-        for el in d(clickable=True):
-            desc = (el.info.get("contentDescription") or "").splitlines()
-            if not desc:
-                continue
-            title = desc[0].strip()
-            body = norm(" ".join(desc))
-            if not title or "вкладка" in body or body in skip:
-                continue
-            if title not in services:
-                services.append(title)
+            skip = {
+                "объекты", "новый визит", "профиль", "назад",
+                "вход по локации", "выбор активности",
+            }
+            services: list[str] = []
+            for el in d(clickable=True):
+                desc = (el.info.get("contentDescription") or "").splitlines()
+                if not desc:
+                    continue
+                title = desc[0].strip()
+                body = norm(" ".join(desc))
+                if not title or "вкладка" in body or body in skip:
+                    continue
+                if title not in services:
+                    services.append(title)
 
-        d.press("back")
-        return services
+            d.press("back")
+            return services
+        finally:
+            self.cleanup()
 
     def dump_ui(self) -> str:
         """Current window hierarchy for selector calibration."""
