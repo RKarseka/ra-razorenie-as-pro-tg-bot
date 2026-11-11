@@ -251,17 +251,54 @@ async def _send_menu(m: types.Message, uid: int) -> None:
     _track(uid, "menu", r.message_id)
 
 
+def _unlist(uid: int, kind: str, *ids: int) -> None:
+    """Drop ids from a tracked kind — used to move auto-tracked ids
+    under an explicit kind so kind-skip sweeps (e.g. skip={'menu'})
+    keep them alive."""
+    raw = store.get_setting(f"trk:{uid}:{kind}", "")
+    if not raw:
+        return
+    drop = {str(i) for i in ids}
+    store.set_setting(
+        f"trk:{uid}:{kind}",
+        ",".join(s for s in raw.split(",") if s and s not in drop))
+
+
 def _track(uid: int, kind: str, *ids: int) -> None:
     """Persist transient message ids so they can be deleted later,
     including after a restart."""
+    _unlist(uid, "auto", *ids)
     store.set_setting(f"trk:{uid}:{kind}", ",".join(str(i) for i in ids if i))
 
 
 def _track_more(uid: int, kind: str, *ids: int) -> None:
     """Append to the tracked transient ids of a kind (unlike _track)."""
+    _unlist(uid, "auto", *ids)
     raw = store.get_setting(f"trk:{uid}:{kind}", "")
     cur = [s for s in raw.split(",") if s]
     store.set_setting(f"trk:{uid}:{kind}", ",".join(cur + [str(i) for i in ids if i]))
+
+
+def wrap_sends(bot) -> None:
+    """Auto-track every message the bot sends under 'auto' — send sites
+    can't forget to mark a transient message anymore. Explicit _track
+    calls move ids under their own kind (and out of 'auto')."""
+    for name in ("send_message", "send_photo", "send_document",
+                 "send_video", "send_animation", "send_audio", "send_voice"):
+        orig = getattr(bot, name, None)
+        if orig is None:
+            continue
+
+        async def send(*args, _orig=orig, **kwargs):
+            msg = await _orig(*args, **kwargs)
+            try:
+                if isinstance(msg, types.Message):
+                    _track_more(msg.chat.id, "auto", msg.message_id)
+            except Exception:
+                pass
+            return msg
+
+        setattr(bot, name, send)
 
 
 async def _untrack(bot, uid: int, kind: str) -> None:

@@ -9,8 +9,8 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 
 from .config import config
 from .handlers import (
-    router, main_menu, _track, _untrack, _untrack_all, start_deleter,
-    store,
+    router, main_menu, _track, _untrack_all, start_deleter,
+    store, wrap_sends,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -40,7 +40,8 @@ async def greet_users(bot: Bot):
     store.close_open_requests()
     for aid in store.all_admin_ids():
         try:
-            await _untrack(bot, aid, "admreq")
+            # Sweep all transient kinds except the keyboard anchor.
+            await _untrack_all(bot, aid, skip=frozenset({"menu"}))
         except Exception:
             pass
     for uid in config.allowed_users:
@@ -57,6 +58,7 @@ async def greet_users(bot: Bot):
 
 def main():
     bot = Bot(token=config.bot_token)
+    wrap_sends(bot)  # auto-track every outgoing message for later sweeps
     dp = Dispatcher()
     dp.include_router(router)
     dp.startup.register(set_commands)

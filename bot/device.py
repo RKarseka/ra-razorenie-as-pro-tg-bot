@@ -36,6 +36,25 @@ class CheckinCancelled(DeviceError):
     """Raised inside the check-in flow when a newer request supersedes it."""
 
 
+class AlreadyVisited(DeviceError):
+    """The app shows 'Вы уже совершили визит сегодня' — a confirmed
+    visit from earlier today; the geo list is replaced by that screen."""
+
+    def __init__(self):
+        super().__init__(
+            "визит сегодня уже был — список объектов откроется завтра")
+
+
+_VISITED_RE = "(?is).*уже\s*совершили\s*визит.*"
+
+
+def _visited_screen(d) -> bool:
+    """True when the 'already visited today' screen is showing instead
+    of the geo list — it replaces the 'Новый визит' tab content."""
+    return (d(descriptionMatches=_VISITED_RE).exists
+            or d(textMatches=_VISITED_RE).exists)
+
+
 @dataclass
 class Step:
     name: str
@@ -255,11 +274,8 @@ class Device:
         # «Вы уже совершили визит сегодня» — a confirmed visit from earlier
         # today replaces the geo list entirely, so there is nothing to
         # search: count it as the confirmed outcome and stop.
-        visited_re = "(?is).*уже\s*совершили\s*визит.*"
-
         def already_visited() -> bool:
-            return (d(descriptionMatches=visited_re).exists
-                    or d(textMatches=visited_re).exists)
+            return _visited_screen(d)
 
         target = None
         for app_try in range(3):
@@ -273,6 +289,8 @@ class Device:
                 time.sleep(6)
             try:
                 self._open_geo_list(d)
+            except AlreadyVisited:
+                break
             except DeviceError:
                 if app_try < 2:
                     continue
@@ -447,9 +465,15 @@ class Device:
         # 'новый визит' can't collide with body copy like 'Осталось 4 визита'.
         self._tap(d, "(?is).*(new (visit|check.?in)|новый визит).*", timeout=5)
         time.sleep(3)
+        if _visited_screen(d):
+            raise AlreadyVisited()
         loc_re = "(?is).*(вход по локац|by location|enter by location).*"
         if not self._tap(d, loc_re, timeout=8):
+            if _visited_screen(d):
+                raise AlreadyVisited()
             raise DeviceError("'Enter by location' option not found")
+        if _visited_screen(d):
+            raise AlreadyVisited()
         time.sleep(3)
 
     def venues_near(
