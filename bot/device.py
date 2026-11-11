@@ -252,6 +252,15 @@ class Device:
             return (d(descriptionMatches=empty_re).exists
                     or d(textMatches=empty_re).exists)
 
+        # «Вы уже совершили визит сегодня» — a confirmed visit from earlier
+        # today replaces the geo list entirely, so there is nothing to
+        # search: count it as the confirmed outcome and stop.
+        visited_re = "(?is).*уже\s*совершили\s*визит.*"
+
+        def already_visited() -> bool:
+            return (d(descriptionMatches=visited_re).exists
+                    or d(textMatches=visited_re).exists)
+
         target = None
         for app_try in range(3):
             if app_try:
@@ -275,13 +284,14 @@ class Device:
             # The list loads asynchronously after the location changes —
             # poll for a while, then scroll to the bottom.
             deadline = time.time() + 20
-            while target is None and time.time() < deadline and not list_empty():
+            while (target is None and time.time() < deadline
+                   and not list_empty() and not already_visited()):
                 self._check_cancel()
                 target = find_venue()
                 if target is None:
                     time.sleep(1)
             for _ in range(6):
-                if (target is not None or list_empty()
+                if (target is not None or list_empty() or already_visited()
                         or not d(scrollable=True).exists):
                     break
                 before = d.dump_hierarchy()
@@ -298,6 +308,11 @@ class Device:
             d.click(*target)
         steps.append(Step("venue_selected", self.screenshot()))
         if target is None:
+            if already_visited():
+                steps.append(Step("outcome_confirmed", self.screenshot()))
+                step("close_app")
+                self.close_allsports()
+                return steps
             listed = "\n".join(f"  - {t}" for t in sorted(seen)) or "  (пусто)"
             raise DeviceError(
                 f"venue '{place_name}' not found in geo list. Saw:\n{listed}")
