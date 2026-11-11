@@ -495,6 +495,11 @@ async def _apply_balance(bot, uid: int, venue: str, op: str,
     if op == "add":
         nb = store.add_balance(venue, minutes)
         store.log_balance(venue, minutes, "manual")
+        await _broadcast(
+            bot, venue, uid,
+            f"⏱ Пополнение по «{venue}»: +{_fmt_min(minutes)}. "
+            f"Баланс: {_fmt_min(nb)}.",
+            exclude={uid})
         return f"💳 +{_fmt_min(minutes)} → баланс «{venue}»: {_fmt_min(nb)}"
     if op == "sub":
         nb = store.add_balance(venue, -minutes)
@@ -509,6 +514,11 @@ async def _apply_balance(bot, uid: int, venue: str, op: str,
     prev = place.balance_min
     store.set_balance(venue, minutes)
     store.log_balance(venue, minutes - prev, "correct")
+    await _broadcast(
+        bot, venue, uid,
+        f"⏱ Коррекция баланса «{venue}»: {_fmt_min(prev)} → "
+        f"{_fmt_min(minutes)}.",
+        exclude={uid})
     return f"💳 Баланс «{venue}» установлен: {_fmt_min(minutes)}"
 
 
@@ -1289,6 +1299,11 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
                 nb = store.add_balance(place.name, mins)
                 store.log_balance(place.name, mins, "visit")
                 final += f"\n💳 +{_fmt_min(mins)} → баланс: {_fmt_min(nb)}"
+                await _broadcast(
+                    m.bot, place.name, uid,
+                    f"⏱ +{_fmt_min(mins)} за подтверждённый визит по "
+                    f"«{place.name}». Баланс: {_fmt_min(nb)}.",
+                    exclude={uid})
         elif outcome == "outcome_expired":
             final = ("⏱ Время ожидания истекло — администратор не успел "
                      f"подтвердить. Попробуй ещё раз.\n{geo}")
