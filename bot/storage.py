@@ -16,6 +16,7 @@ class Place:
     services: list[str] = field(default_factory=list)
     balance_min: int = 0
     balance_track: bool = False
+    alias: str = ""
 
 
 class PlaceStore:
@@ -73,7 +74,8 @@ class PlaceStore:
         for col in ("address TEXT NOT NULL DEFAULT ''",
                     "services TEXT NOT NULL DEFAULT '[]'",
                     "balance_min INTEGER NOT NULL DEFAULT 0",
-                    "balance_track INTEGER NOT NULL DEFAULT 0"):
+                    "balance_track INTEGER NOT NULL DEFAULT 0",
+                    "alias TEXT NOT NULL DEFAULT ''"):
             try:
                 self.db.execute(f"ALTER TABLE places ADD COLUMN {col}")
             except sqlite3.OperationalError:
@@ -86,11 +88,12 @@ class PlaceStore:
         svc = services if services is not None else (prev.services if prev else [])
         bal_min = prev.balance_min if prev else 0
         bal_trk = prev.balance_track if prev else False
+        alias = prev.alias if prev else ""
         self.db.execute(
             "INSERT OR REPLACE INTO places(name, lat, lon, address, services, "
-            "balance_min, balance_track) VALUES(?,?,?,?,?,?,?)",
+            "balance_min, balance_track, alias) VALUES(?,?,?,?,?,?,?,?)",
             (name, lat, lon, address, json.dumps(svc, ensure_ascii=False),
-             bal_min, 1 if bal_trk else 0),
+             bal_min, 1 if bal_trk else 0, alias),
         )
         self.db.commit()
 
@@ -102,12 +105,12 @@ class PlaceStore:
     @staticmethod
     def _row(r) -> Place:
         return Place(r[0], r[1], r[2], r[3], json.loads(r[4] or "[]"),
-                     r[5], bool(r[6]))
+                     r[5], bool(r[6]), r[7])
 
     def get(self, name: str) -> Place | None:
         row = self.db.execute(
             "SELECT name, lat, lon, address, services, balance_min, "
-            "balance_track FROM places WHERE name=?",
+            "balance_track, alias FROM places WHERE name=?",
             (name,),
         ).fetchone()
         return self._row(row) if row else None
@@ -117,9 +120,14 @@ class PlaceStore:
             self._row(r)
             for r in self.db.execute(
                 "SELECT name, lat, lon, address, services, balance_min, "
-                "balance_track FROM places ORDER BY name"
+                "balance_track, alias FROM places ORDER BY name"
             )
         ]
+
+    def set_alias(self, name: str, alias: str) -> None:
+        self.db.execute("UPDATE places SET alias=? WHERE name=?",
+                        (alias, name))
+        self.db.commit()
 
     # ---------- hour balance ----------
 

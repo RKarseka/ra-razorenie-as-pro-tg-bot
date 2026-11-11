@@ -41,6 +41,12 @@ _pending_svc_pick: dict[int, dict] = {}
 _awaiting_place_name: set[int] = set()
 _awaiting_name_for: dict[int, int] = {}
 _awaiting_balance: dict[int, tuple[str, str]] = {}  # uid -> (venue, op)
+_awaiting_alias: dict[int, str] = {}  # uid -> venue name
+
+
+def _pname(place) -> str:
+    """Display name: the owner's alias when set, else the canonical name."""
+    return (getattr(place, "alias", "") or place.name)
 
 
 def _fmt_min(minutes: int) -> str:
@@ -94,7 +100,8 @@ def main_menu() -> ReplyKeyboardMarkup:
     row1 = []
     req = store.current_request()
     if req:
-        row1.append(KeyboardButton(text=f"⏳ {req['venue']}"))
+        _p = store.get(req['venue'])
+        row1.append(KeyboardButton(text=f"⏳ {_pname(_p) if _p else req['venue']}"))
         pend = _pending_req.get(req["id"])
         if req["state"] == "waiting" and pend and pend["result"] is None:
             row1.append(KeyboardButton(text=BTN_FORCE))
@@ -171,7 +178,7 @@ def place_menu(uid: int) -> InlineKeyboardMarkup | None:
     _pending_places[uid] = places
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=p.name, callback_data=f"checkin:{i}")]
+            [InlineKeyboardButton(text=_pname(p), callback_data=f"checkin:{i}")]
             for i, p in enumerate(places)
         ]
     )
@@ -483,10 +490,12 @@ def _place_card(place) -> tuple[str, InlineKeyboardMarkup, int]:
     services = "\n".join(f"  • {x}" for x in place.services) or "  —"
     bal = (f"💳 Баланс: {_fmt_min(place.balance_min)}\n"
            if place.balance_track else "")
-    text = (f"{place.name}\nАдрес: {place.address or '—'}\n"
+    canonical = (f"В Allsports: {place.name}\n" if place.alias else "")
+    text = (f"{_pname(place)}\n{canonical}Адрес: {place.address or '—'}\n"
             f"Координаты: {place.lat}, {place.lon}\n{bal}Услуги:\n{services}")
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Услуги", callback_data=f"svcedit:{idx}"),
+         InlineKeyboardButton(text="🏷 Псевдоним", callback_data=f"palias:{idx}"),
          InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del:{idx}")],
         [InlineKeyboardButton(text="🏃 Запросить визит", callback_data=f"vis:{idx}")],
         [InlineKeyboardButton(text="⏱ Баланс часов", callback_data=f"bal:{idx}"),
@@ -499,7 +508,7 @@ def _place_card(place) -> tuple[str, InlineKeyboardMarkup, int]:
 def _balance_card(place) -> tuple[str, InlineKeyboardMarkup]:
     places = store.list()
     idx = next((i for i, p in enumerate(places) if p.name == place.name), -1)
-    text = (f"⏱ Баланс «{place.name}»: {_fmt_min(place.balance_min)}\n"
+    text = (f"⏱ Баланс «{_pname(place)}»: {_fmt_min(place.balance_min)}\n"
             f"Учёт часов: {'вкл' if place.balance_track else 'выкл'}")
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Пополнить",
@@ -593,6 +602,25 @@ async def callback_balance_toggle(c: types.CallbackQuery):
     await c.message.edit_text(text, reply_markup=kb)
     await c.answer(
         "Учёт включён" if place.balance_track else "Учёт выключен")
+
+
+@router.callback_query(F.data.startswith("palias:"))
+async def callback_place_alias(c: types.CallbackQuery):
+    if c.from_user.id not in config.allowed_users:
+        return await c.answer()
+    place = _resolve_place(c, c.data.removeprefix("palias:"))
+    if place is None:
+        return await c.answer("Список устарел — открой «Объекты» заново.",
+                              show_alert=True)
+    place = store.get(place.name) or place
+    _awaiting_alias[c.from_user.id] = place.name
+    cur = f"\nСейчас: {place.alias}" if place.alias else ""
+    await c.message.edit_text(
+        f"Псевдоним для «{place.name}».{cur}\n\n"
+        "Напиши псевдоним — он будет показываться вместо названия\n"
+        "(в Allsports и у админов останется настоящее).\n"
+        "«-» — убрать псевдоним.")
+    await c.answer()
 
 
 @router.callback_query(F.data.startswith("baltell:"))
@@ -702,11 +730,12 @@ async def callback_places_back(c: types.CallbackQuery):
     places = store.list()
     _pending_places[c.from_user.id] = places
     lines = [
-        f"• {p.name}: {p.lat}, {p.lon}" + (f" — {p.address}" if p.address else "")
+        f"• {_pname(p)}: {p.lat}, {p.lon}"
+        + (f" — {p.address}" if p.address else "")
         for p in places
     ]
     buttons = [
-        [InlineKeyboardButton(text=p.name, callback_data=f"plc:{i}")]
+        [InlineKeyboardButton(text=_pname(p), callback_data=f"plc:{i}")]
         for i, p in enumerate(places)
     ]
     buttons.append([InlineKeyboardButton(text="➕ Добавить объект",
@@ -1111,7 +1140,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     # in the keyboard itself while the request is waiting.
     await _untrack(m.bot, uid, "req")
     r = await m.answer(
-        f"📨 Запрос отправлен администраторам «{place.name}»{svc}.\n"
+        f"📨 Запрос отправлен администраторам «{_pname(place)}»{svc}.\n"
         "⏳ Жду готовности до 22:30.",
         reply_markup=main_menu())
     _track_more(uid, "req", r.message_id)
@@ -1136,16 +1165,16 @@ async def _request_admin_ready(m, place, service, admins) -> None:
     if result in ("ready", "force"):
         if result == "ready":
             rr = await m.answer(f"✅ Администратор готов — запускаю "
-                                f"«{place.name}»{svc}.")
+                                f"«{_pname(place)}»{svc}.")
             _track_more(uid, "req", rr.message_id)
             await _broadcast(m.bot, place.name, uid,
                              f"✅ Администратор готов — запускаю "
-                             f"«{place.name}»{svc}.", exclude={uid},
+                             f"«{_pname(place)}»{svc}.", exclude={uid},
                              notify_admins=False)
         else:
             await _broadcast(m.bot, place.name, uid,
                              f"▶️ Запуск без подтверждения администратора "
-                             f"— «{place.name}»{svc}.", exclude={uid},
+                             f"— «{_pname(place)}»{svc}.", exclude={uid},
                              notify_admins=False)
         await _run_checkin(m, place, service, req_id)
         return
@@ -1161,16 +1190,16 @@ async def _request_admin_ready(m, place, service, admins) -> None:
         for msg in sent:
             _autodelete(msg, 120)
     elif result == "declined":
-        rr = await m.answer(f"Администраторы «{place.name}» не могут принять "
+        rr = await m.answer(f"Администраторы «{_pname(place)}» не могут принять "
                             "запрос сейчас.", reply_markup=main_menu())
         _track_more(uid, "req", rr.message_id)
     else:
         rr = await m.answer(f"⏱ Не дождался готовности администратора "
-                            f"«{place.name}» до 22:30 — запрос закрыт.",
+                            f"«{_pname(place)}» до 22:30 — запрос закрыт.",
                             reply_markup=main_menu())
         _track_more(uid, "req", rr.message_id)
         await _broadcast(m.bot, place.name, uid,
-                         f"⏱ Запрос в «{place.name}»{svc} истёк "
+                         f"⏱ Запрос в «{_pname(place)}»{svc} истёк "
                          "без подтверждения.", exclude={uid},
                          notify_admins=False)
 
@@ -1331,7 +1360,7 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
         else:
             label = name
         asyncio.run_coroutine_threadsafe(
-            _set_progress(f"{place.name}: {label}…"), loop
+            _set_progress(f"{_pname(place)}: {label}…"), loop
         )
         if name == "await_outcome":
             asyncio.run_coroutine_threadsafe(
@@ -1751,7 +1780,7 @@ async def _admin_restart(m: types.Message, req: dict) -> None:
     await _broadcast(m.bot, place.name, req["owner"],
                      f"🔁 Администратор {await _display_name(m.bot, m.chat.id)} "
                      f"просит повторить "
-                     f"«{place.name}» — запускаю.",
+                     f"«{_pname(place)}» — запускаю.",
                      notify_admins=False)
     store.set_request_state(req["id"], "ready")
     await _untrack(m.bot, m.chat.id, "admreq")
@@ -1787,6 +1816,18 @@ async def free_text(m: types.Message):
                 "Можно и в минутах с суффиксом: 45 мин.")
         text = await _apply_balance(m.bot, uid, venue, op, minutes)
         return await m.answer(text, reply_markup=main_menu())
+    if uid in _awaiting_alias and m.from_user.id in config.allowed_users:
+        venue = _awaiting_alias.pop(uid)
+        alias = m.text.strip()[:64]
+        store.set_alias(venue, "" if alias == "-" else alias)
+        place = store.get(venue)
+        if place:
+            text, kb, _ = _place_card(place)
+            return await m.answer(
+                (f"Псевдоним сохранён: {alias}" if alias != "-"
+                 else "Псевдоним убран.") + f"\n\n{text}",
+                reply_markup=kb)
+        return await m.answer("Объект удалён.", reply_markup=main_menu())
     if uid in _awaiting_name_for and m.from_user.id in config.allowed_users:
         target = _awaiting_name_for.pop(uid)
         store.set_name(target, m.text.strip()[:64])
