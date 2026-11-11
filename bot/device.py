@@ -255,8 +255,7 @@ class Device:
         target = None
         for app_try in range(3):
             if app_try:
-                log.info("checkin: geo list empty/missed — restarting "
-                         "Allsports (%d/3)", app_try + 1)
+                step(f"restart_app_{app_try + 1}")  # reports progress too
                 self.close_allsports()
                 time.sleep(2)
                 self.set_location(lat, lon, jitter=jitter)

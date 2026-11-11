@@ -1030,8 +1030,21 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
 
     def on_step(name: str) -> None:
         last_step[0] = name
+        if name.startswith("restart_app"):
+            # Surface the app restart in chat, not only in the log.
+            n = name.rsplit("_", 1)[-1]
+            label = f"перезапускаю приложение ({n}/3)"
+
+            async def _note():
+                r = await m.answer(
+                    f"⚠️ «{place.name}»: список пуст или объект не найден "
+                    f"— {label}")
+                _track_more(uid, "req", r.message_id)
+            asyncio.run_coroutine_threadsafe(_note(), loop)
+        else:
+            label = name
         asyncio.run_coroutine_threadsafe(
-            _set_progress(f"{place.name}: {name}…"), loop
+            _set_progress(f"{place.name}: {label}…"), loop
         )
         if name == "await_outcome":
             asyncio.run_coroutine_threadsafe(
