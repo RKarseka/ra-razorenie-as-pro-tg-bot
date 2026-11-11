@@ -112,13 +112,15 @@ async def _display_name(bot, tg_id: int) -> str:
 
 
 async def _broadcast(bot, venue: str, owner_uid: int, text: str,
-                     exclude: set[int] | None = None) -> list[types.Message]:
+                     exclude: set[int] | None = None,
+                     reply_markup=None) -> list[types.Message]:
     """Log an event to the request owner AND every venue admin at once."""
     targets = ({owner_uid} | set(store.admins_for(venue))) - (exclude or set())
     sent = []
     for uid in targets:
         try:
-            msg = await bot.send_message(uid, text)
+            msg = await bot.send_message(uid, text,
+                                         reply_markup=reply_markup)
             sent.append(msg)
             if uid != owner_uid:  # admin chats self-clean after 20 min
                 asyncio.create_task(_autodelete(msg, 1200))
@@ -972,6 +974,29 @@ async def callback_req_force(c: types.CallbackQuery):
     await _drop(c.message)
 
 
+def _retry_kb(req_id: str | None, state: str):
+    """Inline «Повторить запрос» for admins on expired/failed outcomes."""
+    if req_id and state in ("expired", "failed"):
+        return InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🔁 Повторить запрос",
+                                 callback_data=f"retry:{req_id}")]])
+    return None
+
+
+@router.callback_query(F.data.startswith("retry:"))
+async def callback_req_retry(c: types.CallbackQuery):
+    req_id = c.data.removeprefix("retry:")
+    req = store.get_request(req_id)
+    if (not req or req["state"] not in ("expired", "failed")
+            or c.from_user.id not in store.admins_for(req["venue"])):
+        return await c.answer("Запрос устарел.", show_alert=True)
+    place = store.get(req["venue"])
+    if not place:
+        return await c.answer("Объект удалён из списка.", show_alert=True)
+    await c.answer("Повторяю запрос.")
+    await _admin_restart(c.message, req)
+
+
 async def _notify_request_sent(bot, venue: str, owner: int) -> None:
     await _broadcast(
         bot, venue, owner,
@@ -1090,8 +1115,12 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
         # Persistent result doubles as the keyboard anchor.
         rr = await m.answer(final, reply_markup=main_menu())
         _track_more(uid, "req", rr.message_id)
-        await _broadcast(m.bot, place.name, uid, f"{place.name}: {final}",
-                         exclude={uid})
+        # The admin copy drops the geo internals; on expired/failed it
+        # carries a one-tap retry button.
+        await _broadcast(m.bot, place.name, uid,
+                         f"{place.name}: {final.splitlines()[0]}",
+                         exclude={uid},
+                         reply_markup=_retry_kb(req_id, state))
         if state == "expired" and req_id:
             asyncio.create_task(_remind_admin(m.bot, req_id))
     except CheckinCancelled:
@@ -1118,7 +1147,8 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
             store.set_request_state(req_id, "failed")
             asyncio.create_task(_remind_admin(m.bot, req_id))
         await _broadcast(m.bot, place.name, uid,
-                         f"{place.name}: ошибка — {e}", exclude={uid})
+                         f"{place.name}: ошибка — {e}", exclude={uid},
+                         reply_markup=_retry_kb(req_id, "failed"))
         try:
             shot = await run_in_thread(device.screenshot)
             ph = await m.answer_photo(
