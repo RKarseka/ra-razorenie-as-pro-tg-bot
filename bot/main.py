@@ -8,7 +8,10 @@ from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from .config import config
-from .handlers import router, main_menu, _track, _untrack, store
+from .handlers import (
+    router, main_menu, _track, _untrack, _untrack_all, start_deleter,
+    store,
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -42,9 +45,7 @@ async def greet_users(bot: Bot):
             pass
     for uid in config.allowed_users:
         try:
-            for kind in ("update", "menu", "status", "shot", "dump",
-                         "settings", "checkin", "req"):
-                await _untrack(bot, uid, kind)
+            await _untrack_all(bot, uid)
             r = await bot.send_message(
                 uid, "Бот запущен и готов к работе.",
                 reply_markup=main_menu(),
@@ -60,6 +61,10 @@ def main():
     dp.include_router(router)
     dp.startup.register(set_commands)
     dp.startup.register(greet_users)
+
+    async def _start_deleter(bot: Bot):
+        start_deleter(bot)
+    dp.startup.register(_start_deleter)
 
     if config.mode != "webhook":
         import asyncio

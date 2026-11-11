@@ -63,6 +63,13 @@ class PlaceStore:
             "  reason TEXT NOT NULL DEFAULT '',"
             "  ts REAL NOT NULL)"
         )
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS deletes("
+            "  chat_id INTEGER NOT NULL,"
+            "  msg_id INTEGER NOT NULL,"
+            "  at REAL NOT NULL,"
+            "  PRIMARY KEY(chat_id, msg_id))"
+        )
         for col in ("address TEXT NOT NULL DEFAULT ''",
                     "services TEXT NOT NULL DEFAULT '[]'",
                     "balance_min INTEGER NOT NULL DEFAULT 0",
@@ -146,6 +153,33 @@ class PlaceStore:
             "INSERT INTO balance_log(venue, delta, reason, ts) "
             "VALUES(?,?,?,?)", (venue, delta_min, reason, time.time()))
         self.db.commit()
+
+    # ---------- scheduled message deletion ----------
+
+    def schedule_delete(self, chat_id: int, msg_id: int,
+                        delay: float) -> None:
+        import time
+        self.db.execute(
+            "INSERT OR REPLACE INTO deletes(chat_id, msg_id, at) "
+            "VALUES(?,?,?)", (chat_id, msg_id, time.time() + delay))
+        self.db.commit()
+
+    def due_deletes(self) -> list[tuple[int, int]]:
+        import time
+        return self.db.execute(
+            "SELECT chat_id, msg_id FROM deletes WHERE at<=?",
+            (time.time(),)).fetchall()
+
+    def pop_delete(self, chat_id: int, msg_id: int) -> None:
+        self.db.execute(
+            "DELETE FROM deletes WHERE chat_id=? AND msg_id=?",
+            (chat_id, msg_id))
+        self.db.commit()
+
+    def settings_keys(self, prefix: str) -> list[str]:
+        return [r[0] for r in self.db.execute(
+            "SELECT key FROM settings WHERE key LIKE ?",
+            (prefix + "%",))]
 
     def get_setting(self, key: str, default: str = "") -> str:
         row = self.db.execute(

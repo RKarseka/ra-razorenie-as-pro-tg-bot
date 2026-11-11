@@ -158,7 +158,7 @@ async def _broadcast(bot, venue: str, owner_uid: int, text: str,
                                          reply_markup=reply_markup)
             sent.append(msg)
             if uid != owner_uid:  # admin chats self-clean after 20 min
-                asyncio.create_task(_autodelete(msg, 1200))
+                _autodelete(msg, 1200)
         except Exception:
             log.exception("broadcast to %s failed", uid)
     return sent
@@ -205,9 +205,33 @@ async def _drop(msg) -> None:
         pass
 
 
-async def _autodelete(m: types.Message, secs: int = 20) -> None:
-    await asyncio.sleep(secs)
-    await _drop(m)
+def _autodelete(m: types.Message, secs: int = 20) -> None:
+    """Queue a message for deletion in `secs` — persisted in the DB, so
+    it survives bot restarts (the deleter loop does the actual delete)."""
+    store.schedule_delete(m.chat.id, m.message_id, secs)
+
+
+async def _deleter_loop(bot) -> None:
+    """Delete messages whose scheduled time has come, every 30 s."""
+    while True:
+        try:
+            for chat_id, mid in store.due_deletes():
+                try:
+                    await bot.delete_message(chat_id, mid)
+                except Exception:
+                    pass
+                store.pop_delete(chat_id, mid)
+        except Exception:
+            log.exception("deleter loop tick failed")
+        await asyncio.sleep(30)
+
+
+_deleter_task = None
+
+
+def start_deleter(bot) -> None:
+    global _deleter_task
+    _deleter_task = asyncio.create_task(_deleter_loop(bot))
 
 
 async def _send_menu(m: types.Message, uid: int) -> None:
@@ -246,6 +270,16 @@ async def _untrack(bot, uid: int, kind: str) -> None:
     store.set_setting(f"trk:{uid}:{kind}", "")
 
 
+async def _untrack_all(bot, uid: int, skip: frozenset = frozenset()) -> None:
+    """Delete every tracked transient message of a user — one bucket:
+    kinds are just labels, sweeps no longer enumerate them by hand."""
+    for key in store.settings_keys(f"trk:{uid}:"):
+        kind = key.rsplit(":", 1)[-1]
+        if kind in skip:
+            continue
+        await _untrack(bot, uid, kind)
+
+
 @router.message(Command("start", "help"))
 async def cmd_help(m: types.Message, command: CommandObject):
     await _drop(m)
@@ -274,13 +308,13 @@ async def _accept_invite(m: types.Message, token: str) -> None:
     r = await m.answer(f"Ты принял приглашение — теперь ты администратор "
                        f"«{venue}».\nЗапросы на визит будут приходить сюда.",
                        reply_markup=admin_menu())
-    asyncio.create_task(_autodelete(r, 1200))
+    _autodelete(r, 1200)
     try:
         r = await m.bot.send_message(invited_by,
                                      f"✅ {who} принял приглашение и стал "
                                      f"администратором «{venue}».")
         _track_more(invited_by, "settings", r.message_id)
-        asyncio.create_task(_autodelete(r, 1200))
+        _autodelete(r, 1200)
     except Exception:
         pass
 
@@ -1069,7 +1103,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
             await _untrack(m.bot, aid, "admreq")
             r = await m.bot.send_message(aid, text, reply_markup=kb)
             _track(aid, "admreq", r.message_id)
-            asyncio.create_task(_autodelete(r, 1200))
+            _autodelete(r, 1200)
         except Exception:
             pass
     # Admins already have the detailed ping above — no extra 📨 copy.
@@ -1125,7 +1159,7 @@ async def _request_admin_ready(m, place, service, admins) -> None:
                                 f"⛔ Запрос в «{place.name}»{svc} отменён.",
                                 exclude={uid})
         for msg in sent:
-            asyncio.create_task(_autodelete(msg, 120))
+            _autodelete(msg, 120)
     elif result == "declined":
         rr = await m.answer(f"Администраторы «{place.name}» не могут принять "
                             "запрос сейчас.", reply_markup=main_menu())
@@ -1245,7 +1279,7 @@ async def _remind_admin(bot, req_id: str) -> None:
                 "подтверди его в приложении или сообщи владельцу.",
                 reply_markup=admin_menu())
             _track(aid, "admreq", r.message_id)
-            asyncio.create_task(_autodelete(r, 1200))
+            _autodelete(r, 1200)
         except Exception:
             pass
 
@@ -1266,7 +1300,9 @@ async def _run_checkin(m: types.Message, place, service: str | None = None,
 async def _checkin_locked(m: types.Message, place, service: str | None = None,
                           req_id: str | None = None):
     uid = m.chat.id
-    await _untrack(m.bot, uid, "checkin")
+    # New run = new screen: sweep all tracked leftovers except the
+    # keyboard anchor (deleting it would hide the reply keyboard).
+    await _untrack_all(m.bot, uid, skip={"menu"})
     progress = await m.answer(f"Connecting to device at {config.device_serial}…",
                               reply_markup=main_menu())
     _track(uid, "checkin", progress.message_id)
@@ -1457,12 +1493,7 @@ async def cmd_update(m: types.Message, uid: int | None = None):
     await _drop(m)
     # Sweep old transient messages before updating — the boot-time
     # cleanup would only run after the restart.
-    for kind in ("update", "menu", "status", "shot", "dump",
-                 "settings", "checkin", "req"):
-        try:
-            await _untrack(m.bot, uid, kind)
-        except Exception:
-            pass
+    await _untrack_all(m.bot, uid)
 
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     proc = await asyncio.create_subprocess_exec(
