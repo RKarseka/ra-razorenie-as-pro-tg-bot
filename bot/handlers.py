@@ -150,11 +150,13 @@ async def _display_name(bot, tg_id: int) -> str:
 async def _broadcast(bot, venue: str, owner_uid: int, text: str,
                      exclude: set[int] | None = None,
                      reply_markup=None,
-                     notify_admins: bool = True) -> list[types.Message]:
+                     notify_admins: bool = True,
+                     keep: bool = False) -> list[types.Message]:
     """Log an event to the request owner AND every venue admin at once.
 
     notify_admins=False keeps the copy owner-only — for progress noise
-    admins should never see."""
+    admins should never see. keep=True makes the copies permanent: no
+    20-min admin self-clean, never swept (balance top-ups/write-offs)."""
     targets = {owner_uid} | (
         set(store.admins_for(venue)) if notify_admins else set())
     targets -= (exclude or set())
@@ -164,7 +166,9 @@ async def _broadcast(bot, venue: str, owner_uid: int, text: str,
             msg = await bot.send_message(uid, text,
                                          reply_markup=reply_markup)
             sent.append(msg)
-            if uid != owner_uid:  # admin chats self-clean after 20 min
+            if keep:
+                _unlist(uid, "auto", msg.message_id)
+            elif uid != owner_uid:  # admin chats self-clean after 20 min
                 _autodelete(msg, 1200)
         except Exception:
             log.exception("broadcast to %s failed", uid)
@@ -606,7 +610,7 @@ async def _apply_balance(bot, uid: int, venue: str, op: str,
             bot, venue, uid,
             f"⏱ Пополнение по «{venue}»: +{_fmt_min(minutes)}. "
             f"Баланс: {_fmt_min(nb)}.",
-            exclude={uid})
+            keep=True)
         return f"💳 +{_fmt_min(minutes)} → баланс «{venue}»: {_fmt_min(nb)}"
     if op == "sub":
         nb = store.add_balance(venue, -minutes)
@@ -615,7 +619,7 @@ async def _apply_balance(bot, uid: int, venue: str, op: str,
             bot, venue, uid,
             f"⏱ Списание по «{venue}»: −{_fmt_min(minutes)}. "
             f"Остаток: {_fmt_min(nb)}.",
-            exclude={uid})
+            keep=True)
         return (f"💳 −{_fmt_min(minutes)} → баланс «{venue}»: "
                 f"{_fmt_min(nb)}\nАдминистраторы уведомлены.")
     prev = place.balance_min
@@ -625,7 +629,7 @@ async def _apply_balance(bot, uid: int, venue: str, op: str,
         bot, venue, uid,
         f"⏱ Коррекция баланса «{venue}»: {_fmt_min(prev)} → "
         f"{_fmt_min(minutes)}.",
-        exclude={uid})
+        keep=True)
     return f"💳 Баланс «{venue}» установлен: {_fmt_min(minutes)}"
 
 
@@ -1453,12 +1457,11 @@ async def _checkin_locked(m: types.Message, place, service: str | None = None,
                 mins = _service_minutes(service)
                 nb = store.add_balance(place.name, mins)
                 store.log_balance(place.name, mins, "visit")
-                final += f"\n💳 +{_fmt_min(mins)} → баланс: {_fmt_min(nb)}"
                 await _broadcast(
                     m.bot, place.name, uid,
                     f"⏱ +{_fmt_min(mins)} за подтверждённый визит по "
                     f"«{place.name}». Баланс: {_fmt_min(nb)}.",
-                    exclude={uid})
+                    keep=True)
         elif outcome == "outcome_expired":
             final = ("⏱ Время ожидания истекло — администратор не успел "
                      f"подтвердить. Попробуй ещё раз.\n{geo}")
