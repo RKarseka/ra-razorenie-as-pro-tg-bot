@@ -86,6 +86,7 @@ class Device:
         self.serial = serial
         self.allsports_pkg = allsports_pkg
         self.pin = pin
+        self._launch_activity = None
         # (req_lat, req_lon, act_lat, act_lon, offset_m) of the last spoof
         self.last_spoof: tuple | None = None
         self._cancel = threading.Event()
@@ -172,6 +173,26 @@ class Device:
         self._adb("shell", "; ".join(cmds))
 
     def open_allsports(self) -> None:
+        if self._launch_activity is None:
+            try:
+                output = self._adb(
+                    "shell", "cmd", "package", "resolve-activity", "--brief",
+                    "-c", "android.intent.category.LAUNCHER", self.allsports_pkg,
+                )
+                activity = next(
+                    (line.strip() for line in reversed(output.splitlines())
+                     if line.strip()),
+                    "",
+                )
+                if "/" in activity:
+                    self._launch_activity = activity
+            except Exception:
+                pass
+
+        if self._launch_activity is not None:
+            self._adb("shell", "am", "start", "-n", self._launch_activity)
+            return
+
         self._adb(
             "shell", "monkey", "-p", self.allsports_pkg,
             "-c", "android.intent.category.LAUNCHER", "1",
